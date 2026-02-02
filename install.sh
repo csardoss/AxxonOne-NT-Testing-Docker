@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.7.2"
+SCRIPT_VERSION="1.8.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -582,6 +582,9 @@ DATABASE_PATH=/app/instance/benchmark.db
 # Docker Compose template version (used for update compatibility)
 COMPOSE_VERSION=4
 
+# Update script version (used for update script self-updates)
+UPDATE_SCRIPT_VERSION=2
+
 # Application SHA256 (for update detection)
 APP_SHA256=$EXPECTED_SHA256
 EOF
@@ -698,6 +701,9 @@ create_update_script() {
 #!/bin/bash
 #
 # GPU NeuralTracker Benchmark - Update Script
+# This script can self-update from newer versions in the Docker image.
+#
+# UPDATE_SCRIPT_VERSION: 2
 #
 
 set -e
@@ -711,6 +717,9 @@ ARTIFACT_FILENAME="gpu-nt-benchmark.tar.gz"
 IMAGE_NAME="gpu-nt-benchmark:latest"
 SIGNAL_DIR="$INSTALL_DIR/update-signal"
 
+# Current script version (used for self-update detection)
+CURRENT_UPDATE_SCRIPT_VERSION=2
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -720,6 +729,7 @@ NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
+log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 write_result() {
@@ -743,6 +753,76 @@ if ! command -v jq &> /dev/null; then
     log_error "jq is required but not installed"
     write_result "error" "jq not installed" ""
     exit 1
+fi
+
+# Handle --continue flag (used when script self-updates and re-executes)
+CONTINUE_MODE=false
+if [[ "$1" == "--continue" ]]; then
+    CONTINUE_MODE=true
+    NEW_VERSION="$2"
+    if [[ -z "$NEW_VERSION" ]]; then
+        NEW_VERSION="latest"
+    fi
+    log_info "Continuing update after script self-update (version: $NEW_VERSION)..."
+fi
+
+# If in continue mode, skip directly to compose update and restart
+if [[ "$CONTINUE_MODE" == "true" ]]; then
+    # Jump to the compose update section
+    cd "$INSTALL_DIR"
+
+    # These functions are defined later but we need them here
+    # So we define minimal versions for continue mode
+
+    log_info "Checking for docker-compose.yml updates..."
+    NEW_COMPOSE_VERSION=$(docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/compose.version 2>/dev/null | tr -d '[:space:]')
+
+    if [[ -n "$NEW_COMPOSE_VERSION" ]]; then
+        CURRENT_COMPOSE_VERSION=$(grep "^COMPOSE_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "1")
+
+        if [[ "$NEW_COMPOSE_VERSION" -gt "$CURRENT_COMPOSE_VERSION" ]]; then
+            log_info "Updating docker-compose.yml: v$CURRENT_COMPOSE_VERSION -> v$NEW_COMPOSE_VERSION"
+
+            if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+                cp "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)"
+            fi
+
+            docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/compose.template.yml > "$INSTALL_DIR/docker-compose.yml.new"
+
+            if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+                sed -i 's/# GPU_CONFIG_PLACEHOLDER.*/deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]/' "$INSTALL_DIR/docker-compose.yml.new"
+            else
+                sed -i '/# GPU_CONFIG_PLACEHOLDER/d' "$INSTALL_DIR/docker-compose.yml.new"
+            fi
+
+            mv "$INSTALL_DIR/docker-compose.yml.new" "$INSTALL_DIR/docker-compose.yml"
+
+            if grep -q "^COMPOSE_VERSION=" "$INSTALL_DIR/.env"; then
+                sed -i "s/^COMPOSE_VERSION=.*/COMPOSE_VERSION=$NEW_COMPOSE_VERSION/" "$INSTALL_DIR/.env"
+            else
+                echo "COMPOSE_VERSION=$NEW_COMPOSE_VERSION" >> "$INSTALL_DIR/.env"
+            fi
+
+            log_success "docker-compose.yml updated to v$NEW_COMPOSE_VERSION"
+        else
+            log_info "docker-compose.yml is up to date (v$CURRENT_COMPOSE_VERSION)"
+        fi
+    fi
+
+    # Start container
+    log_info "Starting service..."
+    docker compose up -d --force-recreate 2>/dev/null || docker-compose up -d --force-recreate
+
+    # Update version file
+    echo "$NEW_VERSION" > "$INSTALL_DIR/.installed-version"
+
+    log_success "Update complete: $NEW_VERSION"
+    write_result "success" "Updated to version $NEW_VERSION" "$NEW_VERSION"
+
+    # Clean up signal file
+    rm -f "$SIGNAL_DIR/update-requested"
+
+    exit 0
 fi
 
 # Check for token
@@ -852,6 +932,56 @@ if [[ -n "$LOADED_IMAGE" ]] && [[ "$LOADED_IMAGE" != "$IMAGE_NAME" ]]; then
     log_info "Tagging $LOADED_IMAGE as $IMAGE_NAME..."
     docker tag "$LOADED_IMAGE" "$IMAGE_NAME"
 fi
+
+# Check for update script self-update
+update_script_if_needed() {
+    log_info "Checking for update script updates..."
+
+    # Extract update script version from new image
+    NEW_UPDATE_SCRIPT_VERSION=$(docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/update.version 2>/dev/null | tr -d '[:space:]')
+
+    if [[ -z "$NEW_UPDATE_SCRIPT_VERSION" ]]; then
+        log_info "No update script version in image, skipping script update"
+        return 0
+    fi
+
+    # Get current update script version from .env (or default to 1 for old installations)
+    ENV_UPDATE_SCRIPT_VERSION=$(grep "^UPDATE_SCRIPT_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "1")
+
+    if [[ "$NEW_UPDATE_SCRIPT_VERSION" -gt "$ENV_UPDATE_SCRIPT_VERSION" ]]; then
+        log_info "Updating update.sh: v$ENV_UPDATE_SCRIPT_VERSION -> v$NEW_UPDATE_SCRIPT_VERSION"
+
+        # Backup current update script
+        if [[ -f "$INSTALL_DIR/update.sh" ]]; then
+            cp "$INSTALL_DIR/update.sh" "$INSTALL_DIR/update.sh.backup.$(date +%Y%m%d_%H%M%S)"
+        fi
+
+        # Extract new update script from image
+        docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/update.sh > "$INSTALL_DIR/update.sh.new"
+        chmod +x "$INSTALL_DIR/update.sh.new"
+
+        # Move new script into place
+        mv "$INSTALL_DIR/update.sh.new" "$INSTALL_DIR/update.sh"
+
+        # Update UPDATE_SCRIPT_VERSION in .env
+        if grep -q "^UPDATE_SCRIPT_VERSION=" "$INSTALL_DIR/.env"; then
+            sed -i "s/^UPDATE_SCRIPT_VERSION=.*/UPDATE_SCRIPT_VERSION=$NEW_UPDATE_SCRIPT_VERSION/" "$INSTALL_DIR/.env"
+        else
+            echo "UPDATE_SCRIPT_VERSION=$NEW_UPDATE_SCRIPT_VERSION" >> "$INSTALL_DIR/.env"
+        fi
+
+        log_success "update.sh updated to v$NEW_UPDATE_SCRIPT_VERSION"
+
+        # Re-execute with new script, passing --continue flag to skip download
+        log_info "Re-executing with updated script..."
+        exec "$INSTALL_DIR/update.sh" --continue "$NEW_VERSION"
+    else
+        log_info "update.sh is up to date (v$ENV_UPDATE_SCRIPT_VERSION)"
+    fi
+    return 0
+}
+
+update_script_if_needed
 
 # Check for docker-compose.yml updates
 update_compose_if_needed() {
