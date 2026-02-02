@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.6.1"
+SCRIPT_VERSION="1.6.2"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -849,8 +849,8 @@ rm -f "$IMAGE_FILE"
 update_compose_if_needed() {
     log_info "Checking for docker-compose.yml updates..."
 
-    # Extract compose template version from new image
-    NEW_COMPOSE_VERSION=$(docker run --rm gpu-nt-benchmark:latest cat /app/deploy/compose.version 2>/dev/null | tr -d '[:space:]')
+    # Extract compose template version from new image (override entrypoint to run cat directly)
+    NEW_COMPOSE_VERSION=$(docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/compose.version 2>/dev/null | tr -d '[:space:]')
 
     if [[ -z "$NEW_COMPOSE_VERSION" ]]; then
         log_info "No compose template in image, skipping compose update"
@@ -868,8 +868,8 @@ update_compose_if_needed() {
             cp "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)"
         fi
 
-        # Extract new template
-        docker run --rm gpu-nt-benchmark:latest cat /app/deploy/compose.template.yml > "$INSTALL_DIR/docker-compose.yml.new"
+        # Extract new template (override entrypoint to run cat directly)
+        docker run --rm --entrypoint cat gpu-nt-benchmark:latest /app/deploy/compose.template.yml > "$INSTALL_DIR/docker-compose.yml.new"
 
         # Check if GPU is available and add GPU config
         if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
