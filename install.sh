@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.5.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -580,7 +580,7 @@ OUTPUT_DIR=/app/output
 DATABASE_PATH=/app/instance/benchmark.db
 
 # Docker Compose template version (used for update compatibility)
-COMPOSE_VERSION=2
+COMPOSE_VERSION=3
 EOF
 
     # Add S3 config if provided
@@ -645,6 +645,8 @@ services:
       # Artifact Portal for updates and video pack downloads
       - ARTIFACT_PORTAL_URL=${ARTIFACT_PORTAL_URL}
       - ARTIFACT_PORTAL_TOKEN=${ARTIFACT_TOKEN}
+      # Signal directory for service control and updates
+      - UPDATE_SIGNAL_DIR=/var/run/gpu-nt-benchmark
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -652,7 +654,8 @@ services:
       - ./output:/app/output
       # Video storage - container writes, host (AxxonOne) reads
       - ${VIDEO_DIR}:/app/videos
-      - ./update-signal:/app/update-signal
+      # Signal directory for updates and AxxonOne service control
+      - ./update-signal:/var/run/gpu-nt-benchmark
       # AxxonOne DetectorPack (read-only access to NeuroSDK filters)
       - /opt/AxxonSoft/DetectorPack/NeuroSDK:/opt/AxxonSoft/DetectorPack/NeuroSDK:ro
       # Cache generator binary (read-only, for GPU cache generation)
