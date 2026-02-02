@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.3.0"
+SCRIPT_VERSION="1.4.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -937,12 +937,16 @@ docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
 echo "Removing Docker image..."
 docker rmi gpu-nt-benchmark:latest 2>/dev/null || true
 
-# Remove systemd watcher
+# Remove systemd watchers
 echo "Removing systemd services..."
 systemctl stop gpu-benchmark-update.path 2>/dev/null || true
 systemctl disable gpu-benchmark-update.path 2>/dev/null || true
+systemctl stop gpu-benchmark-service.path 2>/dev/null || true
+systemctl disable gpu-benchmark-service.path 2>/dev/null || true
 rm -f /etc/systemd/system/gpu-benchmark-update.path
 rm -f /etc/systemd/system/gpu-benchmark-update.service
+rm -f /etc/systemd/system/gpu-benchmark-service.path
+rm -f /etc/systemd/system/gpu-benchmark-service.service
 systemctl daemon-reload 2>/dev/null || true
 
 # Remove config/data
@@ -1010,6 +1014,184 @@ EOF
     systemctl start gpu-benchmark-update.path
 
     log_success "Auto-update service configured"
+
+    # Setup AxxonOne service control watcher
+    log_info "Setting up AxxonOne service control..."
+
+    # Create service control script
+    cat > "$INSTALL_DIR/service-control.sh" << 'SERVICECONTROL'
+#!/bin/bash
+#
+# AxxonOne Service Control Script
+# Called by systemd when signal files are created by the Docker container
+#
+
+SIGNAL_DIR="/opt/gpu-nt-benchmark/update-signal"
+AXXON_SERVICES=("axxon-one" "axxon-one-raft")
+
+# Find which AxxonOne service exists
+find_service() {
+    for svc in "${AXXON_SERVICES[@]}"; do
+        if systemctl cat "$svc" &>/dev/null; then
+            echo "$svc"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Write result file
+write_result() {
+    local action="$1"
+    local success="$2"
+    local message="$3"
+    local is_active="$4"
+
+    cat > "$SIGNAL_DIR/service-${action}-result" << EOF
+{
+    "success": $success,
+    "message": "$message",
+    "is_active": $is_active,
+    "timestamp": "$(date -Iseconds)"
+}
+EOF
+}
+
+# Get service status
+get_status() {
+    local svc=$(find_service)
+    if [[ -z "$svc" ]]; then
+        write_result "status" "false" "AxxonOne service not found" "null"
+        return
+    fi
+
+    local status=$(systemctl is-active "$svc" 2>/dev/null)
+    local is_active="false"
+    [[ "$status" == "active" ]] && is_active="true"
+
+    write_result "status" "true" "Service: $svc, Status: $status" "$is_active"
+}
+
+# Stop service
+stop_service() {
+    local svc=$(find_service)
+    if [[ -z "$svc" ]]; then
+        write_result "stop" "false" "AxxonOne service not found" "null"
+        return
+    fi
+
+    # Check if already stopped
+    if ! systemctl is-active "$svc" &>/dev/null; then
+        write_result "stop" "true" "Service already stopped" "false"
+        return
+    fi
+
+    # Stop the service
+    if systemctl stop "$svc"; then
+        # Wait for it to fully stop
+        for i in {1..30}; do
+            if ! systemctl is-active "$svc" &>/dev/null; then
+                write_result "stop" "true" "Service stopped successfully" "false"
+                return
+            fi
+            sleep 1
+        done
+        write_result "stop" "false" "Service did not stop within timeout" "true"
+    else
+        write_result "stop" "false" "Failed to stop service" "true"
+    fi
+}
+
+# Start service
+start_service() {
+    local svc=$(find_service)
+    if [[ -z "$svc" ]]; then
+        write_result "start" "false" "AxxonOne service not found" "null"
+        return
+    fi
+
+    # Check if already running
+    if systemctl is-active "$svc" &>/dev/null; then
+        write_result "start" "true" "Service already running" "true"
+        return
+    fi
+
+    # Start the service
+    if systemctl start "$svc"; then
+        # Wait for it to start
+        for i in {1..30}; do
+            if systemctl is-active "$svc" &>/dev/null; then
+                write_result "start" "true" "Service started successfully" "true"
+                return
+            fi
+            sleep 1
+        done
+        write_result "start" "false" "Service did not start within timeout" "false"
+    else
+        write_result "start" "false" "Failed to start service" "false"
+    fi
+}
+
+# Process signal files
+process_signals() {
+    [[ -f "$SIGNAL_DIR/service-status" ]] && {
+        get_status
+        rm -f "$SIGNAL_DIR/service-status"
+    }
+
+    [[ -f "$SIGNAL_DIR/service-stop" ]] && {
+        stop_service
+        rm -f "$SIGNAL_DIR/service-stop"
+    }
+
+    [[ -f "$SIGNAL_DIR/service-start" ]] && {
+        start_service
+        rm -f "$SIGNAL_DIR/service-start"
+    }
+}
+
+process_signals
+SERVICECONTROL
+
+    chmod +x "$INSTALL_DIR/service-control.sh"
+
+    # Create path unit for service control
+    cat > /etc/systemd/system/gpu-benchmark-service.path << EOF
+[Unit]
+Description=Watch for GPU Benchmark AxxonOne service control requests
+
+[Path]
+PathModified=$INSTALL_DIR/update-signal/service-stop
+PathModified=$INSTALL_DIR/update-signal/service-start
+PathModified=$INSTALL_DIR/update-signal/service-status
+Unit=gpu-benchmark-service.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Create service unit
+    cat > /etc/systemd/system/gpu-benchmark-service.service << EOF
+[Unit]
+Description=GPU Benchmark AxxonOne Service Control
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=$INSTALL_DIR/service-control.sh
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Enable and start path watcher
+    systemctl daemon-reload
+    systemctl enable gpu-benchmark-service.path
+    systemctl start gpu-benchmark-service.path
+
+    log_success "AxxonOne service control configured"
 }
 
 # Start the service
