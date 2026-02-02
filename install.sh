@@ -379,6 +379,13 @@ create_directories() {
     mkdir -p "$INSTALL_DIR/update-signal"
     mkdir -p "$VIDEO_DIR"
 
+    # Set permissions for container user (typically uid 1000)
+    chown -R 1000:1000 "$INSTALL_DIR/instance" 2>/dev/null || true
+    chown -R 1000:1000 "$INSTALL_DIR/output" 2>/dev/null || true
+    chown -R 1000:1000 "$INSTALL_DIR/update-signal" 2>/dev/null || true
+    chmod 755 "$INSTALL_DIR/instance"
+    chmod 755 "$INSTALL_DIR/output"
+
     log_success "Created $INSTALL_DIR"
     log_success "Created $VIDEO_DIR"
 }
