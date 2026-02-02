@@ -181,6 +181,52 @@ check_jq() {
     log_success "jq found"
 }
 
+# Install NVIDIA Container Toolkit
+install_nvidia_toolkit() {
+    log_info "Installing NVIDIA Container Toolkit..."
+
+    if command -v apt-get &> /dev/null; then
+        # Debian/Ubuntu
+        log_info "Adding NVIDIA container toolkit repository..."
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg 2>/dev/null
+
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+            tee /etc/apt/sources.list.d/nvidia-container-toolkit.list > /dev/null
+
+        apt-get update
+        apt-get install -y nvidia-container-toolkit
+
+    elif command -v yum &> /dev/null; then
+        # RHEL/CentOS
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
+            tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+        yum install -y nvidia-container-toolkit
+
+    elif command -v dnf &> /dev/null; then
+        # Fedora
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | \
+            tee /etc/yum.repos.d/nvidia-container-toolkit.repo > /dev/null
+        dnf install -y nvidia-container-toolkit
+
+    else
+        log_error "Could not determine package manager. Please install manually."
+        return 1
+    fi
+
+    # Configure Docker to use NVIDIA runtime
+    log_info "Configuring Docker for NVIDIA runtime..."
+    nvidia-ctk runtime configure --runtime=docker
+
+    # Restart Docker to apply changes
+    log_info "Restarting Docker..."
+    systemctl restart docker
+    sleep 3
+
+    log_success "NVIDIA Container Toolkit installed"
+    return 0
+}
+
 # Check NVIDIA Container Toolkit
 check_nvidia() {
     log_step "Checking NVIDIA Container Toolkit"
@@ -192,26 +238,42 @@ check_nvidia() {
         GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
         if [[ -n "$GPU_NAME" ]]; then
             log_success "NVIDIA GPU detected: $GPU_NAME"
+        else
+            log_warn "nvidia-smi found but no GPU detected"
+            return
         fi
     else
-        log_warn "nvidia-smi not found - GPU drivers may not be installed"
+        log_warn "No NVIDIA GPU detected (nvidia-smi not found)"
+        log_info "Continuing without GPU support"
+        return
     fi
 
     # Check for NVIDIA Container Toolkit
-    if docker run --rm --gpus all nvidia/cuda:11.0-base nvidia-smi &> /dev/null; then
+    if docker run --rm --gpus all ubuntu nvidia-smi &> /dev/null; then
         log_success "NVIDIA Container Toolkit is working"
         NVIDIA_AVAILABLE=true
     else
         log_warn "NVIDIA Container Toolkit not available"
         echo ""
-        echo "To enable GPU support, install NVIDIA Container Toolkit:"
-        echo "  https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
-        echo ""
-        read -p "Continue without GPU support? [y/N] " -n 1 -r REPLY < /dev/tty
+        read -p "Would you like to install NVIDIA Container Toolkit? [Y/n] " -n 1 -r REPLY < /dev/tty
         echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            log_info "Installation cancelled"
-            exit 0
+
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            if install_nvidia_toolkit; then
+                # Verify it works now
+                if docker run --rm --gpus all ubuntu nvidia-smi &> /dev/null; then
+                    log_success "NVIDIA Container Toolkit is now working"
+                    NVIDIA_AVAILABLE=true
+                else
+                    log_warn "Installation completed but GPU access still not working"
+                    log_info "Continuing without GPU support"
+                fi
+            else
+                log_warn "NVIDIA Container Toolkit installation failed"
+                log_info "Continuing without GPU support"
+            fi
+        else
+            log_info "Continuing without GPU support"
         fi
     fi
 }
