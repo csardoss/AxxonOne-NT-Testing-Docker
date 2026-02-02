@@ -597,6 +597,10 @@ EOF
 generate_docker_compose() {
     local GPU_CONFIG=""
 
+    # Capture host system info to pass to container
+    local HOST_HOSTNAME=$(hostname)
+    local HOST_OS_NAME=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d'"' -f2 || uname -sr)
+
     if [[ "$NVIDIA_AVAILABLE" == "true" ]]; then
         GPU_CONFIG="
     deploy:
@@ -626,7 +630,10 @@ services:
       # Video paths - critical for AxxonOne integration
       - VIDEO_CONTAINER_PATH=/app/videos
       - VIDEO_HOST_PATH=${VIDEO_DIR}
-      # Artifact Portal for video pack downloads
+      # Host identification (so container shows host info, not container info)
+      - HOST_ID=${HOST_HOSTNAME}
+      - HOST_OS=${HOST_OS_NAME}
+      # Artifact Portal for updates and video pack downloads
       - ARTIFACT_PORTAL_URL=${ARTIFACT_PORTAL_URL}
       - ARTIFACT_PORTAL_TOKEN=${ARTIFACT_TOKEN}
     extra_hosts:
