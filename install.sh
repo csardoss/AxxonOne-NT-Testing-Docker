@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.2.0"
+SCRIPT_VERSION="1.3.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -578,6 +578,9 @@ OUTPUT_DIR=/app/output
 
 # Database
 DATABASE_PATH=/app/instance/benchmark.db
+
+# Docker Compose template version (used for update compatibility)
+COMPOSE_VERSION=2
 EOF
 
     # Add S3 config if provided
@@ -827,6 +830,59 @@ docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
 log_info "Loading new Docker image..."
 docker load -i "$IMAGE_FILE"
 rm -f "$IMAGE_FILE"
+
+# Check for docker-compose.yml updates
+update_compose_if_needed() {
+    log_info "Checking for docker-compose.yml updates..."
+
+    # Extract compose template version from new image
+    NEW_COMPOSE_VERSION=$(docker run --rm gpu-nt-benchmark:latest cat /app/deploy/compose.version 2>/dev/null | tr -d '[:space:]')
+
+    if [[ -z "$NEW_COMPOSE_VERSION" ]]; then
+        log_info "No compose template in image, skipping compose update"
+        return
+    fi
+
+    # Get current compose version from .env
+    CURRENT_COMPOSE_VERSION=$(grep "^COMPOSE_VERSION=" "$INSTALL_DIR/.env" 2>/dev/null | cut -d'=' -f2 || echo "1")
+
+    if [[ "$NEW_COMPOSE_VERSION" -gt "$CURRENT_COMPOSE_VERSION" ]]; then
+        log_info "Updating docker-compose.yml: v$CURRENT_COMPOSE_VERSION -> v$NEW_COMPOSE_VERSION"
+
+        # Backup current compose file
+        if [[ -f "$INSTALL_DIR/docker-compose.yml" ]]; then
+            cp "$INSTALL_DIR/docker-compose.yml" "$INSTALL_DIR/docker-compose.yml.backup.$(date +%Y%m%d_%H%M%S)"
+        fi
+
+        # Extract new template
+        docker run --rm gpu-nt-benchmark:latest cat /app/deploy/compose.template.yml > "$INSTALL_DIR/docker-compose.yml.new"
+
+        # Check if GPU is available and add GPU config
+        if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+            # Add GPU configuration
+            sed -i 's/# GPU_CONFIG_PLACEHOLDER.*/deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]/' "$INSTALL_DIR/docker-compose.yml.new"
+        else
+            # Remove GPU placeholder comment
+            sed -i '/# GPU_CONFIG_PLACEHOLDER/d' "$INSTALL_DIR/docker-compose.yml.new"
+        fi
+
+        # Move new compose file into place
+        mv "$INSTALL_DIR/docker-compose.yml.new" "$INSTALL_DIR/docker-compose.yml"
+
+        # Update COMPOSE_VERSION in .env
+        if grep -q "^COMPOSE_VERSION=" "$INSTALL_DIR/.env"; then
+            sed -i "s/^COMPOSE_VERSION=.*/COMPOSE_VERSION=$NEW_COMPOSE_VERSION/" "$INSTALL_DIR/.env"
+        else
+            echo "COMPOSE_VERSION=$NEW_COMPOSE_VERSION" >> "$INSTALL_DIR/.env"
+        fi
+
+        log_success "docker-compose.yml updated to v$NEW_COMPOSE_VERSION"
+    else
+        log_info "docker-compose.yml is up to date (v$CURRENT_COMPOSE_VERSION)"
+    fi
+}
+
+update_compose_if_needed
 
 # Start container
 log_info "Starting service..."
