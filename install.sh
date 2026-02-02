@@ -454,16 +454,84 @@ download_image() {
     echo "$VERSION" > "$INSTALL_DIR/.installed-version"
 }
 
+# Download a single video attachment
+download_video_attachment() {
+    local filename="$1"
+    local description="$2"
+
+    log_info "Downloading: $filename"
+
+    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-tool-attachment" \
+        -H "Authorization: Bearer $ARTIFACT_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"project\": \"${ARTIFACT_PROJECT}\",
+            \"tool\": \"${ARTIFACT_TOOL}\",
+            \"filename\": \"${filename}\",
+            \"expires_seconds\": 3600
+        }")
+
+    VIDEO_URL=$(echo "$VIDEO_PRESIGN" | jq -r '.url // empty')
+
+    if [[ -z "$VIDEO_URL" ]]; then
+        log_error "Failed to get download URL for $filename"
+        return 1
+    fi
+
+    VIDEO_FILE="$VIDEO_DIR/$filename"
+
+    curl -L --progress-bar -o "$VIDEO_FILE" "$VIDEO_URL"
+
+    if [[ ! -f "$VIDEO_FILE" ]] || [[ ! -s "$VIDEO_FILE" ]]; then
+        log_error "Download failed for $filename"
+        return 1
+    fi
+
+    # If it's a tar.gz, extract it
+    if [[ "$filename" == *.tar.gz ]] || [[ "$filename" == *.tgz ]]; then
+        log_info "Extracting $filename..."
+        tar -xzf "$VIDEO_FILE" -C "$VIDEO_DIR"
+        rm -f "$VIDEO_FILE"
+    fi
+
+    log_success "Downloaded: $filename"
+    return 0
+}
+
 # Optionally download test videos
 download_test_videos() {
     log_step "Test Video Pack (Optional)"
 
     echo ""
-    echo "A test video pack is available for benchmarking virtual cameras."
-    echo "This is optional if you already have test footage."
+    echo "Checking for available test videos..."
+
+    # List available attachments
+    ATTACHMENTS_RESPONSE=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/list-tool-attachments" \
+        -H "Authorization: Bearer $ARTIFACT_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"project\": \"${ARTIFACT_PROJECT}\",
+            \"tool\": \"${ARTIFACT_TOOL}\"
+        }")
+
+    # Filter for video attachments
+    VIDEO_COUNT=$(echo "$ATTACHMENTS_RESPONSE" | jq -r '[.attachments[] | select(.attachment_type == "video")] | length' 2>/dev/null || echo "0")
+
+    if [[ "$VIDEO_COUNT" == "0" ]] || [[ -z "$VIDEO_COUNT" ]]; then
+        log_info "No test videos available in Artifact Portal"
+        log_info "You can add test videos manually to $VIDEO_DIR"
+        return
+    fi
+
+    echo ""
+    echo -e "${BOLD}Available test videos:${NC}"
     echo ""
 
-    read -p "Download test video pack? [y/N] " -n 1 -r REPLY < /dev/tty
+    # Display available videos
+    echo "$ATTACHMENTS_RESPONSE" | jq -r '.attachments[] | select(.attachment_type == "video") | "  \(.id). \(.filename) (\(.size_bytes / 1024 / 1024 | floor) MB) - \(.description // "No description")"' 2>/dev/null
+
+    echo ""
+    read -p "Download test videos? [y/N] " -n 1 -r REPLY < /dev/tty
     echo
 
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -471,48 +539,34 @@ download_test_videos() {
         return
     fi
 
-    log_info "Requesting video pack URL..."
+    echo ""
+    echo "Enter video numbers to download (comma-separated), or 'all' for all videos:"
+    read -p "Selection [all]: " SELECTION < /dev/tty
+    SELECTION=${SELECTION:-all}
 
-    # Use tool attachment API for video files
-    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-tool-attachment" \
-        -H "Authorization: Bearer $ARTIFACT_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"project\": \"${ARTIFACT_PROJECT}\",
-            \"tool\": \"${ARTIFACT_TOOL}\",
-            \"filename\": \"benchmark-test-videos.tar.gz\",
-            \"expires_seconds\": 3600
-        }")
+    echo ""
 
-    VIDEO_URL=$(echo "$VIDEO_PRESIGN" | jq -r '.url // empty')
-    VIDEO_FILENAME=$(echo "$VIDEO_PRESIGN" | jq -r '.filename // empty')
-    VIDEO_SIZE=$(echo "$VIDEO_PRESIGN" | jq -r '.size_bytes // empty')
-
-    if [[ -z "$VIDEO_URL" ]]; then
-        log_warn "Test video pack not available"
-        log_info "You can add test videos manually to $VIDEO_DIR"
-        return
+    if [[ "$SELECTION" == "all" ]]; then
+        # Download all videos
+        echo "$ATTACHMENTS_RESPONSE" | jq -r '.attachments[] | select(.attachment_type == "video") | "\(.filename)|\(.description // "")"' 2>/dev/null | while IFS='|' read -r filename description; do
+            download_video_attachment "$filename" "$description"
+        done
+    else
+        # Download selected videos by ID
+        IFS=',' read -ra SELECTED_IDS <<< "$SELECTION"
+        for id in "${SELECTED_IDS[@]}"; do
+            id=$(echo "$id" | tr -d ' ')
+            VIDEO_INFO=$(echo "$ATTACHMENTS_RESPONSE" | jq -r ".attachments[] | select(.id == $id and .attachment_type == \"video\") | \"\(.filename)|\(.description // \"\")\"" 2>/dev/null)
+            if [[ -n "$VIDEO_INFO" ]]; then
+                IFS='|' read -r filename description <<< "$VIDEO_INFO"
+                download_video_attachment "$filename" "$description"
+            else
+                log_warn "Video ID $id not found"
+            fi
+        done
     fi
 
-    if [[ -n "$VIDEO_SIZE" ]]; then
-        VIDEO_SIZE_MB=$((VIDEO_SIZE / 1024 / 1024))
-        log_info "Video pack size: ${VIDEO_SIZE_MB} MB"
-    fi
-
-    VIDEO_FILE="$VIDEO_DIR/${VIDEO_FILENAME:-test-videos.tar.gz}"
-
-    log_info "Downloading test videos..."
-    curl -L --progress-bar -o "$VIDEO_FILE" "$VIDEO_URL"
-
-    if [[ ! -f "$VIDEO_FILE" ]] || [[ ! -s "$VIDEO_FILE" ]]; then
-        log_error "Download failed"
-        return
-    fi
-
-    # Extract videos
-    log_info "Extracting test videos..."
-    tar -xzf "$VIDEO_FILE" -C "$VIDEO_DIR"
-    rm -f "$VIDEO_FILE"
+    log_success "Test videos installed to $VIDEO_DIR"
 
     log_success "Test videos installed to $VIDEO_DIR"
 }
