@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.6.0"
+SCRIPT_VERSION="1.6.1"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -580,7 +580,7 @@ OUTPUT_DIR=/app/output
 DATABASE_PATH=/app/instance/benchmark.db
 
 # Docker Compose template version (used for update compatibility)
-COMPOSE_VERSION=3
+COMPOSE_VERSION=4
 
 # Application SHA256 (for update detection)
 APP_SHA256=$EXPECTED_SHA256
@@ -664,7 +664,7 @@ services:
       # Cache generator binary (read-only, for GPU cache generation)
       - /opt/AxxonSoft/DetectorPack/NeuroPackGpuCacheGenerator:/opt/AxxonSoft/DetectorPack/NeuroPackGpuCacheGenerator:ro
       # GPU cache directory (read/write for cache generation)
-      - /var/axxon-data/DetectorPack/gpu-cache:/var/axxon-data/DetectorPack/gpu-cache
+      - /opt/AxxonSoft/AxxonOne/gpucache:/opt/AxxonSoft/AxxonOne/gpucache:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
