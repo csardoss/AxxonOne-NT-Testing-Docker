@@ -555,13 +555,13 @@ generate_env_file() {
 
 # Flask Configuration
 FLASK_ENV=production
-SECRET_KEY=$SECRET_KEY
+SECRET_KEY='$SECRET_KEY'
 
 # AxxonOne Server
 AXXON_HOST=$AXXON_HOST
 AXXON_PORT=$AXXON_PORT
 AXXON_USER=$AXXON_USER
-AXXON_PASS=$AXXON_PASS
+AXXON_PASS='$AXXON_PASS'
 
 # Site Configuration
 SITE_ID=$SITE_ID
