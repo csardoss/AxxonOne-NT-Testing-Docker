@@ -3,6 +3,8 @@
 # GPU NeuralTracker Benchmark - Installation Script
 # Downloads and installs the benchmark tool via Artifact Portal
 #
+# Usage: curl -fsSL https://raw.githubusercontent.com/csardoss/AxxonOne-NT-Testing-Docker/main/install.sh | sudo bash
+#
 
 set -e
 
@@ -71,7 +73,7 @@ print_prerequisites() {
     echo ""
     echo -e "${YELLOW}Note: Without NVIDIA Container Toolkit, GPU monitoring will be limited${NC}"
     echo ""
-    read -p "Do you want to continue? [y/N] " -n 1 -r
+    read -p "Do you want to continue? [y/N] " -n 1 -r REPLY < /dev/tty
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         log_info "Installation cancelled"
@@ -171,7 +173,7 @@ check_nvidia() {
         echo "To enable GPU support, install NVIDIA Container Toolkit:"
         echo "  https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
         echo ""
-        read -p "Continue without GPU support? [y/N] " -n 1 -r
+        read -p "Continue without GPU support? [y/N] " -n 1 -r REPLY < /dev/tty
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
             log_info "Installation cancelled"
@@ -232,7 +234,7 @@ get_artifact_token() {
     echo ""
 
     while true; do
-        read -sp "API Token: " ARTIFACT_TOKEN
+        read -sp "API Token: " ARTIFACT_TOKEN < /dev/tty
         echo
 
         if [[ -z "$ARTIFACT_TOKEN" ]]; then
@@ -243,7 +245,7 @@ get_artifact_token() {
         if validate_token "$ARTIFACT_TOKEN"; then
             break
         else
-            read -p "Try again? [y/N] " -n 1 -r
+            read -p "Try again? [y/N] " -n 1 -r REPLY < /dev/tty
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 log_info "Installation cancelled"
@@ -350,7 +352,7 @@ download_test_videos() {
     echo "This is optional if you already have test footage."
     echo ""
 
-    read -p "Download test video pack? [y/N] " -n 1 -r
+    read -p "Download test video pack? [y/N] " -n 1 -r REPLY < /dev/tty
     echo
 
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -360,12 +362,18 @@ download_test_videos() {
 
     log_info "Requesting video pack URL..."
 
-    VIDEO_PRESIGN=$(curl -s \
+    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-latest" \
         -H "Authorization: Bearer $ARTIFACT_TOKEN" \
-        "${ARTIFACT_PORTAL_URL}/api/v2/artifacts/benchmark-test-videos/presign-latest")
+        -H "Content-Type: application/json" \
+        -d "{
+            \"project\": \"${ARTIFACT_PROJECT}\",
+            \"tool\": \"test-videos\",
+            \"platform_arch\": \"${ARTIFACT_PLATFORM}\",
+            \"latest_filename\": \"benchmark-test-videos.tar.gz\"
+        }")
 
-    VIDEO_URL=$(echo "$VIDEO_PRESIGN" | grep -oP '"url"\s*:\s*"\K[^"]+' || echo "")
-    VIDEO_SHA256=$(echo "$VIDEO_PRESIGN" | grep -oP '"sha256"\s*:\s*"\K[^"]+' || echo "")
+    VIDEO_URL=$(echo "$VIDEO_PRESIGN" | jq -r '.url // empty')
+    VIDEO_SHA256=$(echo "$VIDEO_PRESIGN" | jq -r '.sha256 // empty')
 
     if [[ -z "$VIDEO_URL" ]]; then
         log_warn "Test video pack not available"
@@ -406,23 +414,23 @@ configure_application() {
     echo ""
 
     # AxxonOne Host
-    read -p "AxxonOne Server Host [localhost]: " AXXON_HOST
+    read -p "AxxonOne Server Host [localhost]: " AXXON_HOST < /dev/tty
     AXXON_HOST=${AXXON_HOST:-localhost}
 
     # AxxonOne Port
-    read -p "AxxonOne Server Port [42000]: " AXXON_PORT
+    read -p "AxxonOne Server Port [42000]: " AXXON_PORT < /dev/tty
     AXXON_PORT=${AXXON_PORT:-42000}
 
     # AxxonOne Credentials
-    read -p "AxxonOne Username [root]: " AXXON_USER
+    read -p "AxxonOne Username [root]: " AXXON_USER < /dev/tty
     AXXON_USER=${AXXON_USER:-root}
 
-    read -sp "AxxonOne Password: " AXXON_PASS
+    read -sp "AxxonOne Password: " AXXON_PASS < /dev/tty
     echo
 
     # Site ID
     echo ""
-    read -p "Site ID (for report organization) [default-site]: " SITE_ID
+    read -p "Site ID (for report organization) [default-site]: " SITE_ID < /dev/tty
     SITE_ID=${SITE_ID:-default-site}
 
     # Generate secret key
@@ -431,17 +439,17 @@ configure_application() {
     # S3 Configuration (optional)
     echo ""
     echo "S3 Upload Configuration (optional - for cloud backup of reports):"
-    read -p "Configure S3 upload? [y/N] " -n 1 -r
+    read -p "Configure S3 upload? [y/N] " -n 1 -r REPLY < /dev/tty
     echo
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "S3 Bucket Name: " S3_BUCKET
-        read -p "S3 Region [us-east-1]: " S3_REGION
+        read -p "S3 Bucket Name: " S3_BUCKET < /dev/tty
+        read -p "S3 Region [us-east-1]: " S3_REGION < /dev/tty
         S3_REGION=${S3_REGION:-us-east-1}
-        read -p "S3 Access Key ID: " S3_ACCESS_KEY
-        read -sp "S3 Secret Access Key: " S3_SECRET_KEY
+        read -p "S3 Access Key ID: " S3_ACCESS_KEY < /dev/tty
+        read -sp "S3 Secret Access Key: " S3_SECRET_KEY < /dev/tty
         echo
-        read -p "S3 Endpoint URL (leave empty for AWS): " S3_ENDPOINT
+        read -p "S3 Endpoint URL (leave empty for AWS): " S3_ENDPOINT < /dev/tty
     fi
 }
 
