@@ -18,7 +18,7 @@ This helps you determine the maximum number of NeuralTracker-enabled cameras you
 
 - **Docker Engine** (version 20.10+)
 - **Docker Compose** (version 2.0+)
-- **NVIDIA GPU** with drivers installed
+- **NVIDIA GPU** with drivers installed (optional but recommended)
 - **NVIDIA Container Toolkit** (for GPU monitoring inside container)
 - **AxxonOne VMS** server accessible from the host
 - **Artifact Portal API Token** (provided by administrator)
@@ -55,7 +55,7 @@ The interactive installer will:
 5. **Configure** - Asks for AxxonOne server connection details
 6. **Generate configs** - Creates `.env` and `docker-compose.yml` files
 7. **Start service** - Launches the container and verifies it's healthy
-8. **Setup auto-updates** - Configures systemd watcher for one-click updates
+8. **Setup auto-updates** - Configures systemd watcher for one-click updates from web UI
 
 ## Installation Directory
 
@@ -64,10 +64,15 @@ After installation, files are located at:
 | Path | Description |
 |------|-------------|
 | `/opt/gpu-nt-benchmark/` | Main installation directory |
-| `/opt/gpu-nt-benchmark/.env` | Configuration file |
+| `/opt/gpu-nt-benchmark/.env` | Configuration file (contains version tracking) |
+| `/opt/gpu-nt-benchmark/.artifact-token` | API token for updates (chmod 600) |
+| `/opt/gpu-nt-benchmark/.installed-version` | Currently installed version |
 | `/opt/gpu-nt-benchmark/docker-compose.yml` | Docker Compose configuration |
+| `/opt/gpu-nt-benchmark/update.sh` | Update script (self-updating) |
+| `/opt/gpu-nt-benchmark/uninstall.sh` | Uninstall script |
 | `/opt/gpu-nt-benchmark/instance/` | SQLite database |
 | `/opt/gpu-nt-benchmark/output/` | Benchmark reports |
+| `/opt/gpu-nt-benchmark/update-signal/` | Signal files for web UI updates |
 | `/opt/AxxonSoft/TestVideos/` | Test video files (managed via web UI) |
 
 ## Usage
@@ -75,18 +80,18 @@ After installation, files are located at:
 After installation, access the web interface at:
 
 ```
-http://localhost:5000
+http://YOUR_HOST:5000
 ```
 
 ### Test Videos
 
-Test videos are **not** downloaded automatically during installation. Instead, manage them through the web UI:
+Test videos are **not** downloaded automatically during installation. Manage them through the web UI:
 
 1. Navigate to **Settings** in the web interface
 2. Find the **Video Management** section
 3. Choose from available options:
    - **Download from Artifact Portal** - Pre-packaged video packs for testing
-   - **Upload custom videos** - Your own footage (up to 10GB)
+   - **Upload custom videos** - Your own footage
 
 Videos are stored in `/opt/AxxonSoft/TestVideos/` on the host filesystem, which AxxonOne can access for virtual camera testing.
 
@@ -102,8 +107,14 @@ cd /opt/gpu-nt-benchmark && docker compose down
 # Start service
 cd /opt/gpu-nt-benchmark && docker compose up -d
 
+# Restart service
+cd /opt/gpu-nt-benchmark && docker compose restart
+
 # Check status
 docker ps | grep gpu-nt-benchmark
+
+# Check health
+curl -s http://localhost:5000/api/health | jq
 
 # Manual update
 sudo /opt/gpu-nt-benchmark/update.sh
@@ -114,20 +125,51 @@ sudo /opt/gpu-nt-benchmark/uninstall.sh
 
 ## Updating
 
-The tool supports easy updates. When a new version is available:
+The tool supports multiple update methods with automatic self-updating capabilities.
 
-**Option 1: Manual update**
+### Update Methods
+
+**Option 1: From the Web UI (Recommended)**
+1. Go to **Dashboard** or **Settings**
+2. If an update is available, click **Update Now**
+3. The update runs automatically in the background
+
+**Option 2: Manual Command**
 ```bash
 sudo /opt/gpu-nt-benchmark/update.sh
 ```
 
-**Option 2: From the web UI**
-Use the "Check for Updates" feature in Settings (if available)
+### What Happens During an Update
 
-Updates automatically:
-- Backup the database before updating
-- Download and verify the new image
-- Restart the container
+1. **Database backup** - Automatically backs up SQLite database
+2. **Download** - Pulls new Docker image from Artifact Portal
+3. **Verify** - SHA256 checksum verification
+4. **Self-update scripts** - If newer versions of `update.sh` or `docker-compose.yml` are available, they are automatically extracted and applied
+5. **Restart** - Container is recreated with the new image
+
+### Version Tracking
+
+The system tracks multiple version numbers in `.env`:
+
+| Variable | Description |
+|----------|-------------|
+| `APP_SHA256` | SHA256 of current Docker image (for update detection) |
+| `COMPOSE_VERSION` | Version of docker-compose.yml template |
+| `UPDATE_SCRIPT_VERSION` | Version of update.sh script |
+
+When a new Docker image contains newer versions of these components, they are automatically updated during the update process.
+
+### Systemd Update Service
+
+The installer configures a systemd path watcher that monitors for update requests from the web UI:
+
+```bash
+# Check status
+sudo systemctl status gpu-nt-benchmark-update.path
+
+# View update logs
+sudo journalctl -u gpu-nt-benchmark-update.service -f
+```
 
 ## Uninstalling
 
@@ -141,8 +183,11 @@ The uninstaller will prompt before removing:
 - Docker container and image
 - Configuration and database files
 - Test video files
+- Systemd services
 
 ## Configuration
+
+### Initial Configuration
 
 The installer prompts for these settings:
 
@@ -152,11 +197,11 @@ The installer prompts for these settings:
 | AxxonOne Port | HTTP API port | 42000 |
 | AxxonOne Username | API username | root |
 | AxxonOne Password | API password | (required) |
-| Site ID | Identifier for reports | default-site |
+| Site ID | Identifier for reports | (hostname) |
 
 ### Environment Variables
 
-You can override settings in `/opt/gpu-nt-benchmark/.env`:
+Configuration is stored in `/opt/gpu-nt-benchmark/.env`:
 
 ```bash
 # AxxonOne Connection
@@ -167,6 +212,16 @@ AXXON_PASS=your_password
 
 # Site Configuration
 SITE_ID=my-site-name
+HOST_ID=my-hostname
+
+# Artifact Portal (for updates)
+ARTIFACT_PORTAL_URL=https://artifacts.digitalsecurityguard.com
+ARTIFACT_PORTAL_TOKEN=apt_xxxxx
+
+# Version Tracking (managed automatically)
+APP_SHA256=abc123...
+COMPOSE_VERSION=4
+UPDATE_SCRIPT_VERSION=2
 
 # Optional: S3 Upload for reports
 S3_BUCKET=my-bucket
@@ -177,8 +232,42 @@ S3_SECRET_KEY=...
 
 After changing `.env`, restart the container:
 ```bash
-cd /opt/gpu-nt-benchmark && docker compose restart
+cd /opt/gpu-nt-benchmark && docker compose down && docker compose up -d
 ```
+
+### Updating AxxonOne Credentials
+
+You can update AxxonOne server credentials through the web UI:
+
+1. Go to **Settings**
+2. Find **AxxonOne Server Credentials**
+3. Enter new credentials and click **Save**
+
+Credentials are stored in the SQLite database and take effect immediately.
+
+## Architecture
+
+### Docker Container
+
+The benchmark tool runs as a Docker container with:
+- Flask web application on port 5000
+- SQLite database for configuration and test history
+- Access to host's NVIDIA GPU (if available)
+- Read-only access to AxxonOne's NeuroSDK filters and GPU cache
+
+### Host Integration
+
+The container communicates with the host through:
+- **Signal files** (`/opt/gpu-nt-benchmark/update-signal/`) - For triggering updates from web UI
+- **Mounted volumes** - For database persistence, video files, and GPU cache access
+- **host.docker.internal** - For connecting to AxxonOne on the host
+
+### Systemd Services
+
+| Service | Purpose |
+|---------|---------|
+| `gpu-nt-benchmark-update.path` | Watches for update signal files |
+| `gpu-nt-benchmark-update.service` | Runs update.sh when triggered |
 
 ## Troubleshooting
 
@@ -211,11 +300,57 @@ cd /opt/gpu-nt-benchmark && docker compose logs
 
 # Check container status
 docker ps -a | grep gpu-nt-benchmark
+
+# Verify image exists
+docker images | grep gpu-nt-benchmark
+```
+
+### Update stuck "in progress"
+If the web UI shows "Update in Progress" but it's not running:
+```bash
+# Remove the stale signal file
+sudo rm -f /opt/gpu-nt-benchmark/update-signal/update-requested
+
+# Refresh the web page
+```
+
+### CPU/RAM metrics not showing (Docker)
+Ensure the AxxonOne server credentials are saved in the web UI Settings. The container needs to connect to AxxonOne's Prometheus endpoint on the host.
+
+### AxxonOne version not detected (Docker)
+The tool fetches version info from AxxonOne's API. Ensure:
+1. Credentials are saved in Settings
+2. AxxonOne server is accessible from the container
+3. The API user has sufficient permissions
+
+## Logs
+
+### Container logs
+```bash
+cd /opt/gpu-nt-benchmark && docker compose logs -f
+```
+
+### Update service logs
+```bash
+sudo journalctl -u gpu-nt-benchmark-update.service -f
+```
+
+### Application logs (inside container)
+```bash
+docker exec -it gpu-nt-benchmark cat /app/logs/app.log
 ```
 
 ## Support
 
-For issues or questions, contact your system administrator or open an issue in this repository.
+For issues or questions:
+1. Check the troubleshooting section above
+2. Review container logs for error messages
+3. Contact your system administrator
+4. Open an issue in this repository
+
+## Version History
+
+See [CHANGELOG.md](https://github.com/csardoss/Axxon-NT-Testing-App/blob/main/CHANGELOG.md) in the main application repository for detailed release notes.
 
 ## License
 
