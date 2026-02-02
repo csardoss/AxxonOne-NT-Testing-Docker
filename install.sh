@@ -504,10 +504,13 @@ configure_application() {
     echo ""
     echo "Configure connection to AxxonOne server:"
     echo ""
+    echo "Note: Since this runs in Docker, use 'host.docker.internal' to connect"
+    echo "      to AxxonOne on the same machine, or the actual IP for remote servers."
+    echo ""
 
     # AxxonOne Host
-    read -p "AxxonOne Server Host [localhost]: " AXXON_HOST <&3
-    AXXON_HOST=${AXXON_HOST:-localhost}
+    read -p "AxxonOne Server Host [host.docker.internal]: " AXXON_HOST <&3
+    AXXON_HOST=${AXXON_HOST:-host.docker.internal}
 
     # AxxonOne Port
     read -p "AxxonOne Server Port [42000]: " AXXON_PORT <&3
