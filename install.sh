@@ -446,9 +446,16 @@ download_image() {
 
     # Load Docker image
     log_info "Loading Docker image..."
-    docker load -i "$IMAGE_FILE"
+    LOADED_IMAGE=$(docker load -i "$IMAGE_FILE" | grep "Loaded image:" | sed 's/Loaded image: //')
 
-    log_success "Docker image loaded successfully"
+    log_success "Docker image loaded: $LOADED_IMAGE"
+
+    # Tag as latest if loaded with version tag
+    if [[ "$LOADED_IMAGE" != "$IMAGE_NAME" ]] && [[ -n "$LOADED_IMAGE" ]]; then
+        log_info "Tagging $LOADED_IMAGE as $IMAGE_NAME..."
+        docker tag "$LOADED_IMAGE" "$IMAGE_NAME"
+        log_success "Image tagged as $IMAGE_NAME"
+    fi
 
     # Cleanup downloaded file
     rm -f "$IMAGE_FILE"
