@@ -626,16 +626,21 @@ services:
       # Video paths - critical for AxxonOne integration
       - VIDEO_CONTAINER_PATH=/app/videos
       - VIDEO_HOST_PATH=${VIDEO_DIR}
-      # Artifact Portal token for video downloads
-      - ARTIFACT_API_TOKEN_FILE=/app/.artifact-token
+      # Artifact Portal for video pack downloads
+      - ARTIFACT_PORTAL_URL=${ARTIFACT_PORTAL_URL}
+      - ARTIFACT_PORTAL_TOKEN=${ARTIFACT_TOKEN}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./instance:/app/instance
       - ./output:/app/output
       # Video storage - container writes, host (AxxonOne) reads
       - ${VIDEO_DIR}:/app/videos
       - ./update-signal:/app/update-signal
-      # API token for Artifact Portal
-      - ./.artifact-token:/app/.artifact-token:ro
+      # AxxonOne DetectorPack (read-only access to NeuroSDK filters)
+      - /opt/AxxonSoft/DetectorPack/NeuroSDK:/opt/AxxonSoft/DetectorPack/NeuroSDK:ro
+      # GPU cache directory (read/write for cache generation)
+      - /var/axxon-data/DetectorPack/gpu-cache:/var/axxon-data/DetectorPack/gpu-cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
