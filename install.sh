@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.7.0"
+SCRIPT_VERSION="1.7.1"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -842,8 +842,16 @@ docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
 
 # Load new image
 log_info "Loading new Docker image..."
-docker load -i "$IMAGE_FILE"
+LOADED_IMAGE=$(docker load -i "$IMAGE_FILE" | grep "Loaded image:" | sed 's/Loaded image: //')
 rm -f "$IMAGE_FILE"
+
+log_info "Loaded: $LOADED_IMAGE"
+
+# Tag as latest so docker-compose uses the new image
+if [[ -n "$LOADED_IMAGE" ]] && [[ "$LOADED_IMAGE" != "$IMAGE_NAME" ]]; then
+    log_info "Tagging $LOADED_IMAGE as $IMAGE_NAME..."
+    docker tag "$LOADED_IMAGE" "$IMAGE_NAME"
+fi
 
 # Check for docker-compose.yml updates
 update_compose_if_needed() {
