@@ -26,6 +26,7 @@ ARTIFACT_TOOL="docker-container"
 ARTIFACT_PLATFORM="linux-amd64"
 ARTIFACT_FILENAME="gpu-nt-benchmark.tar.gz"
 IMAGE_NAME="gpu-nt-benchmark:latest"
+DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -324,6 +325,20 @@ validate_token() {
 get_artifact_token() {
     log_step "Artifact Portal Authentication"
 
+    # Use embedded token by default
+    ARTIFACT_TOKEN="$DEFAULT_API_TOKEN"
+
+    if [[ -n "$ARTIFACT_TOKEN" ]]; then
+        log_info "Using embedded API token..."
+        if validate_token "$ARTIFACT_TOKEN"; then
+            return 0
+        else
+            log_warn "Embedded token failed, prompting for manual entry"
+            ARTIFACT_TOKEN=""
+        fi
+    fi
+
+    # Fall back to manual entry if no embedded token or it failed
     echo ""
     echo "Enter your Artifact Portal API token."
     echo "This token will be securely stored for future updates."
