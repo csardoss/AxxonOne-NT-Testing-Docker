@@ -457,129 +457,30 @@ download_image() {
     echo "$VERSION" > "$INSTALL_DIR/.installed-version"
 }
 
-# Download a single video attachment
-download_video_attachment() {
-    local filename="$1"
-    local description="$2"
-
-    log_info "Downloading: $filename"
-
-    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-tool-attachment" \
-        -H "Authorization: Bearer $ARTIFACT_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"project\": \"${ARTIFACT_PROJECT}\",
-            \"tool\": \"${ARTIFACT_TOOL}\",
-            \"filename\": \"${filename}\",
-            \"expires_seconds\": 3600
-        }")
-
-    VIDEO_URL=$(echo "$VIDEO_PRESIGN" | jq -r '.url // empty')
-
-    if [[ -z "$VIDEO_URL" ]]; then
-        log_error "Failed to get download URL for $filename"
-        return 1
-    fi
-
-    VIDEO_FILE="$VIDEO_DIR/$filename"
-
-    curl -L --progress-bar -o "$VIDEO_FILE" "$VIDEO_URL"
-
-    if [[ ! -f "$VIDEO_FILE" ]] || [[ ! -s "$VIDEO_FILE" ]]; then
-        log_error "Download failed for $filename"
-        return 1
-    fi
-
-    # If it's a tar.gz, extract it
-    if [[ "$filename" == *.tar.gz ]] || [[ "$filename" == *.tgz ]]; then
-        log_info "Extracting $filename..."
-        tar -xzf "$VIDEO_FILE" -C "$VIDEO_DIR"
-        rm -f "$VIDEO_FILE"
-    fi
-
-    log_success "Downloaded: $filename"
-    return 0
-}
-
-# Optionally download test videos
-download_test_videos() {
-    log_step "Test Video Pack (Optional)"
+# Setup video storage directory (no auto-download per Phase 3)
+setup_video_storage() {
+    log_step "Video Storage Setup"
 
     echo ""
-    log_info "Checking for available test videos..."
+    log_info "Creating video storage directory..."
 
-    # List available attachments
-    ATTACHMENTS_RESPONSE=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/list-tool-attachments" \
-        -H "Authorization: Bearer $ARTIFACT_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"project\": \"${ARTIFACT_PROJECT}\",
-            \"tool\": \"${ARTIFACT_TOOL}\"
-        }")
+    mkdir -p "$VIDEO_DIR"
+    chmod 755 "$VIDEO_DIR"
 
-    # Check if we got a valid response
-    if echo "$ATTACHMENTS_RESPONSE" | jq -e '.attachments' > /dev/null 2>&1; then
-        VIDEO_COUNT=$(echo "$ATTACHMENTS_RESPONSE" | jq '[.attachments[] | select(.attachment_type == "video")] | length')
-    else
-        log_warn "Could not fetch attachments from Artifact Portal"
-        log_info "You can add test videos manually to $VIDEO_DIR"
-        return
-    fi
-
-    if [[ "$VIDEO_COUNT" -eq 0 ]]; then
-        log_info "No test videos available in Artifact Portal"
-        log_info "You can add test videos manually to $VIDEO_DIR"
-        return
-    fi
-
-    log_success "Found $VIDEO_COUNT video(s) available"
+    # Ensure container user can write (uid 1000 typically)
+    chown -R 1000:1000 "$VIDEO_DIR" 2>/dev/null || true
 
     echo ""
-    echo -e "${BOLD}Available test videos:${NC}"
+    echo -e "${BOLD}Video storage configured:${NC} $VIDEO_DIR"
+    echo ""
+    echo "  After installation, manage test videos through the web UI:"
+    echo "    * Download video packs from Artifact Portal"
+    echo "    * Upload your own video files (up to 10GB)"
+    echo ""
+    echo "  Videos are stored on the HOST filesystem so AxxonOne can access them."
     echo ""
 
-    # Display available videos
-    echo "$ATTACHMENTS_RESPONSE" | jq -r '.attachments[] | select(.attachment_type == "video") | "  \(.id). \(.filename) (\(.size_bytes / 1024 / 1024 | floor) MB) - \(.description // "No description")"' 2>/dev/null
-
-    echo ""
-    read -p "Download test videos? [y/N] " -n 1 -r REPLY <&3
-    echo
-
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        log_info "Skipping test video download"
-        return
-    fi
-
-    echo ""
-    echo "Enter video numbers to download (comma-separated), or 'all' for all videos:"
-    read -p "Selection [all]: " SELECTION <&3
-    SELECTION=${SELECTION:-all}
-
-    echo ""
-
-    if [[ "$SELECTION" == "all" ]]; then
-        # Download all videos
-        echo "$ATTACHMENTS_RESPONSE" | jq -r '.attachments[] | select(.attachment_type == "video") | "\(.filename)|\(.description // "")"' 2>/dev/null | while IFS='|' read -r filename description; do
-            download_video_attachment "$filename" "$description"
-        done
-    else
-        # Download selected videos by ID
-        IFS=',' read -ra SELECTED_IDS <<< "$SELECTION"
-        for id in "${SELECTED_IDS[@]}"; do
-            id=$(echo "$id" | tr -d ' ')
-            VIDEO_INFO=$(echo "$ATTACHMENTS_RESPONSE" | jq -r ".attachments[] | select(.id == $id and .attachment_type == \"video\") | \"\(.filename)|\(.description // \"\")\"" 2>/dev/null)
-            if [[ -n "$VIDEO_INFO" ]]; then
-                IFS='|' read -r filename description <<< "$VIDEO_INFO"
-                download_video_attachment "$filename" "$description"
-            else
-                log_warn "Video ID $id not found"
-            fi
-        done
-    fi
-
-    log_success "Test videos installed to $VIDEO_DIR"
-
-    log_success "Test videos installed to $VIDEO_DIR"
+    log_success "Video storage ready"
 }
 
 # Prompt for configuration
@@ -651,8 +552,8 @@ AXXON_PASS=$AXXON_PASS
 # Site Configuration
 SITE_ID=$SITE_ID
 
-# Paths
-VIDEO_FOLDER=$VIDEO_DIR
+# Paths - VIDEO_HOST_PATH is what gets sent to AxxonOne
+VIDEO_HOST_PATH=$VIDEO_DIR
 OUTPUT_DIR=/app/output
 
 # Database
@@ -700,17 +601,27 @@ generate_docker_compose() {
 services:
   gpu-nt-benchmark:
     image: ${IMAGE_NAME}
+    pull_policy: never
     container_name: gpu-nt-benchmark
     restart: unless-stopped
     ports:
       - "5000:5000"
     env_file:
       - .env
+    environment:
+      # Video paths - critical for AxxonOne integration
+      - VIDEO_CONTAINER_PATH=/app/videos
+      - VIDEO_HOST_PATH=${VIDEO_DIR}
+      # Artifact Portal token for video downloads
+      - ARTIFACT_API_TOKEN_FILE=/app/.artifact-token
     volumes:
       - ./instance:/app/instance
       - ./output:/app/output
-      - ${VIDEO_DIR}:/videos:ro
+      # Video storage - container writes, host (AxxonOne) reads
+      - ${VIDEO_DIR}:/app/videos
       - ./update-signal:/app/update-signal
+      # API token for Artifact Portal
+      - ./.artifact-token:/app/.artifact-token:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 30s
@@ -1075,7 +986,7 @@ main() {
     get_artifact_token
     create_directories
     download_image
-    download_test_videos
+    setup_video_storage
     configure_application
     generate_env_file
     generate_docker_compose

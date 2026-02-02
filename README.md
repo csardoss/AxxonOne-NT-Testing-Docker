@@ -68,7 +68,7 @@ After installation, files are located at:
 | `/opt/gpu-nt-benchmark/docker-compose.yml` | Docker Compose configuration |
 | `/opt/gpu-nt-benchmark/instance/` | SQLite database |
 | `/opt/gpu-nt-benchmark/output/` | Benchmark reports |
-| `/opt/benchmark-videos/` | Test video files (optional) |
+| `/opt/AxxonSoft/TestVideos/` | Test video files (managed via web UI) |
 
 ## Usage
 
@@ -77,6 +77,18 @@ After installation, access the web interface at:
 ```
 http://localhost:5000
 ```
+
+### Test Videos
+
+Test videos are **not** downloaded automatically during installation. Instead, manage them through the web UI:
+
+1. Navigate to **Settings** in the web interface
+2. Find the **Video Management** section
+3. Choose from available options:
+   - **Download from Artifact Portal** - Pre-packaged video packs for testing
+   - **Upload custom videos** - Your own footage (up to 10GB)
+
+Videos are stored in `/opt/AxxonSoft/TestVideos/` on the host filesystem, which AxxonOne can access for virtual camera testing.
 
 ### Common Commands
 
