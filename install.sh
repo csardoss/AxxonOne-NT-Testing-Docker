@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.1.0"
+SCRIPT_VERSION="1.2.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -652,6 +652,8 @@ services:
       - ./update-signal:/app/update-signal
       # AxxonOne DetectorPack (read-only access to NeuroSDK filters)
       - /opt/AxxonSoft/DetectorPack/NeuroSDK:/opt/AxxonSoft/DetectorPack/NeuroSDK:ro
+      # Cache generator binary (read-only, for GPU cache generation)
+      - /opt/AxxonSoft/DetectorPack/NeuroPackGpuCacheGenerator:/opt/AxxonSoft/DetectorPack/NeuroPackGpuCacheGenerator:ro
       # GPU cache directory (read/write for cache generation)
       - /var/axxon-data/DetectorPack/gpu-cache:/var/axxon-data/DetectorPack/gpu-cache
     healthcheck:
