@@ -473,39 +473,40 @@ download_test_videos() {
 
     log_info "Requesting video pack URL..."
 
-    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-latest" \
+    # Use tool attachment API for video files
+    VIDEO_PRESIGN=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-tool-attachment" \
         -H "Authorization: Bearer $ARTIFACT_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{
             \"project\": \"${ARTIFACT_PROJECT}\",
-            \"tool\": \"test-videos\",
-            \"platform_arch\": \"${ARTIFACT_PLATFORM}\",
-            \"latest_filename\": \"benchmark-test-videos.tar.gz\"
+            \"tool\": \"${ARTIFACT_TOOL}\",
+            \"filename\": \"benchmark-test-videos.tar.gz\",
+            \"expires_seconds\": 3600
         }")
 
     VIDEO_URL=$(echo "$VIDEO_PRESIGN" | jq -r '.url // empty')
-    VIDEO_SHA256=$(echo "$VIDEO_PRESIGN" | jq -r '.sha256 // empty')
+    VIDEO_FILENAME=$(echo "$VIDEO_PRESIGN" | jq -r '.filename // empty')
+    VIDEO_SIZE=$(echo "$VIDEO_PRESIGN" | jq -r '.size_bytes // empty')
 
     if [[ -z "$VIDEO_URL" ]]; then
         log_warn "Test video pack not available"
+        log_info "You can add test videos manually to $VIDEO_DIR"
         return
     fi
 
-    VIDEO_FILE="$VIDEO_DIR/test-videos.tar.gz"
+    if [[ -n "$VIDEO_SIZE" ]]; then
+        VIDEO_SIZE_MB=$((VIDEO_SIZE / 1024 / 1024))
+        log_info "Video pack size: ${VIDEO_SIZE_MB} MB"
+    fi
+
+    VIDEO_FILE="$VIDEO_DIR/${VIDEO_FILENAME:-test-videos.tar.gz}"
 
     log_info "Downloading test videos..."
     curl -L --progress-bar -o "$VIDEO_FILE" "$VIDEO_URL"
 
-    # Verify checksum
-    if [[ -n "$VIDEO_SHA256" ]]; then
-        log_info "Verifying checksum..."
-        ACTUAL_SHA256=$(sha256sum "$VIDEO_FILE" | cut -d' ' -f1)
-        if [[ "$ACTUAL_SHA256" != "$VIDEO_SHA256" ]]; then
-            log_error "Video pack checksum failed - file may be corrupted"
-            rm -f "$VIDEO_FILE"
-            return
-        fi
-        log_success "Checksum verified"
+    if [[ ! -f "$VIDEO_FILE" ]] || [[ ! -s "$VIDEO_FILE" ]]; then
+        log_error "Download failed"
+        return
     fi
 
     # Extract videos
