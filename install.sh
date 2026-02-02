@@ -31,6 +31,9 @@ ARTIFACT_FILENAME="gpu-nt-benchmark.tar.gz"
 IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
+# Script version
+SCRIPT_VERSION="1.1.0"
+
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
@@ -49,11 +52,11 @@ check_root() {
 # Print banner
 print_banner() {
     echo -e "${CYAN}"
-    cat << 'EOF'
+    cat << EOF
   ╔═══════════════════════════════════════════════════════════════╗
   ║                                                               ║
   ║   GPU NeuralTracker Benchmark Tool                            ║
-  ║   Installation Script                                         ║
+  ║   Installation Script v${SCRIPT_VERSION}                              ║
   ║                                                               ║
   ║   Automated GPU performance testing for AxxonOne VMS          ║
   ║                                                               ║
@@ -1002,6 +1005,17 @@ print_completion() {
     echo "    Test videos:    $VIDEO_DIR/"
     echo ""
 }
+
+# Show version and exit
+show_version() {
+    echo "GPU NeuralTracker Benchmark Install Script v${SCRIPT_VERSION}"
+    exit 0
+}
+
+# Parse command line arguments
+if [[ "${1:-}" == "--version" ]] || [[ "${1:-}" == "-v" ]]; then
+    show_version
+fi
 
 # Main installation flow
 main() {
