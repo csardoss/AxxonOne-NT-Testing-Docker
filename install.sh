@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.7.1"
+SCRIPT_VERSION="1.7.2"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -915,6 +915,9 @@ echo "$NEW_VERSION" > "$INSTALL_DIR/.installed-version"
 
 log_success "Update complete: $NEW_VERSION"
 write_result "success" "Updated to version $NEW_VERSION" "$NEW_VERSION"
+
+# Clean up the update request signal file so UI knows update is complete
+rm -f "$SIGNAL_DIR/update-requested"
 UPDATESCRIPT
 
     chmod +x "$INSTALL_DIR/update.sh"
