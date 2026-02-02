@@ -22,7 +22,7 @@ BOLD='\033[1m'
 
 # Configuration
 INSTALL_DIR="/opt/gpu-nt-benchmark"
-VIDEO_DIR="/opt/benchmark-videos"
+VIDEO_DIR="/opt/AxxonSoft/TestVideos"
 ARTIFACT_PORTAL_URL="${ARTIFACT_PORTAL_URL:-https://artifacts.digitalsecurityguard.com}"
 ARTIFACT_PROJECT="axxon-nt-test-tool"
 ARTIFACT_TOOL="docker-container"
@@ -914,7 +914,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 INSTALL_DIR="/opt/gpu-nt-benchmark"
-VIDEO_DIR="/opt/benchmark-videos"
+VIDEO_DIR="/opt/AxxonSoft/TestVideos"
 
 echo -e "${YELLOW}GPU NeuralTracker Benchmark - Uninstaller${NC}"
 echo ""
