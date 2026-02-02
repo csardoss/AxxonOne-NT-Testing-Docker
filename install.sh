@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.6.2"
+SCRIPT_VERSION="1.7.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -898,9 +898,9 @@ update_compose_if_needed() {
 
 update_compose_if_needed
 
-# Start container
+# Start container (force recreate to use new image)
 log_info "Starting service..."
-docker compose up -d 2>/dev/null || docker-compose up -d
+docker compose up -d --force-recreate 2>/dev/null || docker-compose up -d --force-recreate
 
 # Update version file
 echo "$NEW_VERSION" > "$INSTALL_DIR/.installed-version"
@@ -999,7 +999,7 @@ setup_systemd_watcher() {
 Description=Watch for GPU Benchmark update requests
 
 [Path]
-PathModified=$INSTALL_DIR/update-signal/request-update
+PathModified=$INSTALL_DIR/update-signal/update-requested
 Unit=gpu-benchmark-update.service
 
 [Install]
