@@ -503,7 +503,7 @@ download_test_videos() {
     log_step "Test Video Pack (Optional)"
 
     echo ""
-    echo "Checking for available test videos..."
+    log_info "Checking for available test videos..."
 
     # List available attachments
     ATTACHMENTS_RESPONSE=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/list-tool-attachments" \
@@ -514,14 +514,22 @@ download_test_videos() {
             \"tool\": \"${ARTIFACT_TOOL}\"
         }")
 
-    # Filter for video attachments
-    VIDEO_COUNT=$(echo "$ATTACHMENTS_RESPONSE" | jq -r '[.attachments[] | select(.attachment_type == "video")] | length' 2>/dev/null || echo "0")
+    # Check if we got a valid response
+    if echo "$ATTACHMENTS_RESPONSE" | jq -e '.attachments' > /dev/null 2>&1; then
+        VIDEO_COUNT=$(echo "$ATTACHMENTS_RESPONSE" | jq '[.attachments[] | select(.attachment_type == "video")] | length')
+    else
+        log_warn "Could not fetch attachments from Artifact Portal"
+        log_info "You can add test videos manually to $VIDEO_DIR"
+        return
+    fi
 
-    if [[ "$VIDEO_COUNT" == "0" ]] || [[ -z "$VIDEO_COUNT" ]]; then
+    if [[ "$VIDEO_COUNT" -eq 0 ]]; then
         log_info "No test videos available in Artifact Portal"
         log_info "You can add test videos manually to $VIDEO_DIR"
         return
     fi
+
+    log_success "Found $VIDEO_COUNT video(s) available"
 
     echo ""
     echo -e "${BOLD}Available test videos:${NC}"
