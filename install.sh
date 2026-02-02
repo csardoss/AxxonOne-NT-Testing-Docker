@@ -32,7 +32,7 @@ IMAGE_NAME="gpu-nt-benchmark:latest"
 DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.5.0"
+SCRIPT_VERSION="1.6.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -581,6 +581,9 @@ DATABASE_PATH=/app/instance/benchmark.db
 
 # Docker Compose template version (used for update compatibility)
 COMPOSE_VERSION=3
+
+# Application SHA256 (for update detection)
+APP_SHA256=$EXPECTED_SHA256
 EOF
 
     # Add S3 config if provided
@@ -822,6 +825,14 @@ if [[ -n "$EXPECTED_SHA256" ]]; then
         exit 1
     fi
     log_success "Checksum verified"
+
+    # Update APP_SHA256 in .env for update detection
+    if grep -q "^APP_SHA256=" "$INSTALL_DIR/.env"; then
+        sed -i "s/^APP_SHA256=.*/APP_SHA256=$EXPECTED_SHA256/" "$INSTALL_DIR/.env"
+    else
+        echo "APP_SHA256=$EXPECTED_SHA256" >> "$INSTALL_DIR/.env"
+    fi
+    log_info "Updated APP_SHA256 in .env"
 fi
 
 # Stop container
