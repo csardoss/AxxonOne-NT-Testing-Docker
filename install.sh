@@ -8,6 +8,9 @@
 
 set -e
 
+# Open /dev/tty for interactive input (needed when script is piped)
+exec 3</dev/tty || exec 3<&0
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -74,7 +77,7 @@ print_prerequisites() {
     echo ""
     echo -e "${YELLOW}Note: Without NVIDIA Container Toolkit, GPU monitoring will be limited${NC}"
     echo ""
-    read -p "Do you want to continue? [y/N] " -n 1 -r REPLY < /dev/tty
+    read -p "Do you want to continue? [y/N] " -n 1 -r REPLY <&3
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         log_info "Installation cancelled"
@@ -89,7 +92,7 @@ check_docker() {
     if ! command -v docker &> /dev/null; then
         log_warn "Docker is not installed"
         echo ""
-        read -p "Would you like to install Docker automatically? [Y/n] " -n 1 -r REPLY < /dev/tty
+        read -p "Would you like to install Docker automatically? [Y/n] " -n 1 -r REPLY <&3
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
             log_error "Docker is required. Install manually with:"
@@ -256,7 +259,7 @@ check_nvidia() {
     else
         log_warn "NVIDIA Container Toolkit not available"
         echo ""
-        read -p "Would you like to install NVIDIA Container Toolkit? [Y/n] " -n 1 -r REPLY < /dev/tty
+        read -p "Would you like to install NVIDIA Container Toolkit? [Y/n] " -n 1 -r REPLY <&3
         echo
 
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
@@ -345,7 +348,7 @@ get_artifact_token() {
     echo ""
 
     while true; do
-        read -sp "API Token: " ARTIFACT_TOKEN < /dev/tty
+        read -sp "API Token: " ARTIFACT_TOKEN <&3
         echo
 
         if [[ -z "$ARTIFACT_TOKEN" ]]; then
@@ -356,7 +359,7 @@ get_artifact_token() {
         if validate_token "$ARTIFACT_TOKEN"; then
             break
         else
-            read -p "Try again? [y/N] " -n 1 -r REPLY < /dev/tty
+            read -p "Try again? [y/N] " -n 1 -r REPLY <&3
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 log_info "Installation cancelled"
@@ -539,7 +542,7 @@ download_test_videos() {
     echo "$ATTACHMENTS_RESPONSE" | jq -r '.attachments[] | select(.attachment_type == "video") | "  \(.id). \(.filename) (\(.size_bytes / 1024 / 1024 | floor) MB) - \(.description // "No description")"' 2>/dev/null
 
     echo ""
-    read -p "Download test videos? [y/N] " -n 1 -r REPLY < /dev/tty
+    read -p "Download test videos? [y/N] " -n 1 -r REPLY <&3
     echo
 
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -549,7 +552,7 @@ download_test_videos() {
 
     echo ""
     echo "Enter video numbers to download (comma-separated), or 'all' for all videos:"
-    read -p "Selection [all]: " SELECTION < /dev/tty
+    read -p "Selection [all]: " SELECTION <&3
     SELECTION=${SELECTION:-all}
 
     echo ""
@@ -588,23 +591,23 @@ configure_application() {
     echo ""
 
     # AxxonOne Host
-    read -p "AxxonOne Server Host [localhost]: " AXXON_HOST < /dev/tty
+    read -p "AxxonOne Server Host [localhost]: " AXXON_HOST <&3
     AXXON_HOST=${AXXON_HOST:-localhost}
 
     # AxxonOne Port
-    read -p "AxxonOne Server Port [42000]: " AXXON_PORT < /dev/tty
+    read -p "AxxonOne Server Port [42000]: " AXXON_PORT <&3
     AXXON_PORT=${AXXON_PORT:-42000}
 
     # AxxonOne Credentials
-    read -p "AxxonOne Username [root]: " AXXON_USER < /dev/tty
+    read -p "AxxonOne Username [root]: " AXXON_USER <&3
     AXXON_USER=${AXXON_USER:-root}
 
-    read -sp "AxxonOne Password: " AXXON_PASS < /dev/tty
+    read -sp "AxxonOne Password: " AXXON_PASS <&3
     echo
 
     # Site ID
     echo ""
-    read -p "Site ID (for report organization) [default-site]: " SITE_ID < /dev/tty
+    read -p "Site ID (for report organization) [default-site]: " SITE_ID <&3
     SITE_ID=${SITE_ID:-default-site}
 
     # Generate secret key
@@ -613,17 +616,17 @@ configure_application() {
     # S3 Configuration (optional)
     echo ""
     echo "S3 Upload Configuration (optional - for cloud backup of reports):"
-    read -p "Configure S3 upload? [y/N] " -n 1 -r REPLY < /dev/tty
+    read -p "Configure S3 upload? [y/N] " -n 1 -r REPLY <&3
     echo
 
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        read -p "S3 Bucket Name: " S3_BUCKET < /dev/tty
-        read -p "S3 Region [us-east-1]: " S3_REGION < /dev/tty
+        read -p "S3 Bucket Name: " S3_BUCKET <&3
+        read -p "S3 Region [us-east-1]: " S3_REGION <&3
         S3_REGION=${S3_REGION:-us-east-1}
-        read -p "S3 Access Key ID: " S3_ACCESS_KEY < /dev/tty
-        read -sp "S3 Secret Access Key: " S3_SECRET_KEY < /dev/tty
+        read -p "S3 Access Key ID: " S3_ACCESS_KEY <&3
+        read -sp "S3 Secret Access Key: " S3_SECRET_KEY <&3
         echo
-        read -p "S3 Endpoint URL (leave empty for AWS): " S3_ENDPOINT < /dev/tty
+        read -p "S3 Endpoint URL (leave empty for AWS): " S3_ENDPOINT <&3
     fi
 }
 
