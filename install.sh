@@ -86,12 +86,25 @@ check_docker() {
     log_step "Checking Docker Installation"
 
     if ! command -v docker &> /dev/null; then
-        log_error "Docker is not installed"
+        log_warn "Docker is not installed"
         echo ""
-        echo "Install Docker using:"
-        echo "  curl -fsSL https://get.docker.com | sh"
-        echo ""
-        exit 1
+        read -p "Would you like to install Docker automatically? [Y/n] " -n 1 -r REPLY < /dev/tty
+        echo
+        if [[ $REPLY =~ ^[Nn]$ ]]; then
+            log_error "Docker is required. Install manually with:"
+            echo "  curl -fsSL https://get.docker.com | sh"
+            exit 1
+        fi
+
+        log_info "Installing Docker..."
+        curl -fsSL https://get.docker.com | sh
+
+        # Start Docker service
+        log_info "Starting Docker service..."
+        systemctl start docker
+        systemctl enable docker
+
+        log_success "Docker installed successfully"
     fi
 
     DOCKER_VERSION=$(docker --version | grep -oP '\d+\.\d+' | head -1)
@@ -99,9 +112,14 @@ check_docker() {
 
     # Check Docker daemon is running
     if ! docker info &> /dev/null; then
-        log_error "Docker daemon is not running"
-        echo "Start Docker with: sudo systemctl start docker"
-        exit 1
+        log_warn "Docker daemon is not running"
+        log_info "Starting Docker service..."
+        systemctl start docker
+        sleep 2
+        if ! docker info &> /dev/null; then
+            log_error "Failed to start Docker daemon"
+            exit 1
+        fi
     fi
     log_success "Docker daemon is running"
 }
@@ -119,12 +137,28 @@ check_docker_compose() {
         log_success "Docker Compose (standalone) found: version $COMPOSE_VERSION"
         COMPOSE_CMD="docker-compose"
     else
-        log_error "Docker Compose is not installed"
-        echo ""
-        echo "Install Docker Compose using:"
-        echo "  sudo apt-get install docker-compose-plugin"
-        echo ""
-        exit 1
+        log_warn "Docker Compose is not installed"
+        log_info "Installing Docker Compose plugin..."
+
+        if command -v apt-get &> /dev/null; then
+            apt-get update && apt-get install -y docker-compose-plugin
+        elif command -v yum &> /dev/null; then
+            yum install -y docker-compose-plugin
+        elif command -v dnf &> /dev/null; then
+            dnf install -y docker-compose-plugin
+        else
+            log_error "Could not auto-install Docker Compose. Please install manually."
+            exit 1
+        fi
+
+        if docker compose version &> /dev/null; then
+            COMPOSE_VERSION=$(docker compose version --short 2>/dev/null || echo "unknown")
+            log_success "Docker Compose installed: version $COMPOSE_VERSION"
+            COMPOSE_CMD="docker compose"
+        else
+            log_error "Docker Compose installation failed"
+            exit 1
+        fi
     fi
 }
 
