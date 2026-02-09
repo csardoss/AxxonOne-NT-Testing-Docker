@@ -29,10 +29,9 @@ ARTIFACT_TOOL="docker-container"
 ARTIFACT_PLATFORM="linux-amd64"
 ARTIFACT_FILENAME="gpu-nt-benchmark.tar.gz"
 IMAGE_NAME="gpu-nt-benchmark:latest"
-DEFAULT_API_TOKEN="apt_vuqFUcCxCk2TmJaT6741cRVBFBNXAvrdsVfuLbdYKxI"
 
 # Script version
-SCRIPT_VERSION="1.8.0"
+SCRIPT_VERSION="1.9.0"
 
 # Logging functions
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -75,7 +74,7 @@ print_prerequisites() {
     echo "  2. Docker Compose installed (version 2.0+)"
     echo "  3. NVIDIA GPU with drivers installed (optional but recommended)"
     echo "  4. NVIDIA Container Toolkit installed (for GPU support)"
-    echo "  5. Access to Artifact Portal with valid API token"
+    echo "  5. A web browser to approve device pairing (Artifact Portal)"
     echo "  6. Network access to AxxonOne server"
     echo ""
     echo -e "${YELLOW}Note: Without NVIDIA Container Toolkit, GPU monitoring will be limited${NC}"
@@ -327,24 +326,207 @@ validate_token() {
     fi
 }
 
+# Device pairing flow
+device_pairing() {
+    log_info "Starting device pairing..."
+
+    local HOSTNAME_ID
+    HOSTNAME_ID=$(hostname)
+
+    # Step 1: Request pairing code
+    local PAIR_RESPONSE
+    PAIR_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/start" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"org_slug\": \"axxonsoft\",
+            \"app_id\": \"gpu-nt-benchmark\",
+            \"instance_id\": \"${HOSTNAME_ID}\"
+        }" 2>/dev/null || echo -e "\n000")
+
+    local PAIR_HTTP_CODE
+    PAIR_HTTP_CODE=$(echo "$PAIR_RESPONSE" | tail -1)
+    local PAIR_BODY
+    PAIR_BODY=$(echo "$PAIR_RESPONSE" | sed '$d')
+
+    if [[ "$PAIR_HTTP_CODE" != "200" ]]; then
+        log_error "Failed to start pairing (HTTP $PAIR_HTTP_CODE)"
+        return 1
+    fi
+
+    local PAIRING_CODE
+    PAIRING_CODE=$(echo "$PAIR_BODY" | jq -r '.pairing_code // empty')
+    local APPROVAL_URL
+    APPROVAL_URL=$(echo "$PAIR_BODY" | jq -r '.approval_url // empty')
+    local EXCHANGE_TOKEN
+    EXCHANGE_TOKEN=$(echo "$PAIR_BODY" | jq -r '.exchange_token // empty')
+
+    if [[ -z "$PAIRING_CODE" ]]; then
+        log_error "No pairing code returned"
+        return 1
+    fi
+
+    # Step 2: Display pairing code prominently
+    echo ""
+    echo -e "${CYAN}${BOLD}"
+    echo "  ╔═══════════════════════════════════════════════════════╗"
+    echo "  ║                                                       ║"
+    echo "  ║   Device Pairing Code:                                ║"
+    echo "  ║                                                       ║"
+    printf "  ║       %-16s                           ║\n" "$PAIRING_CODE"
+    echo "  ║                                                       ║"
+    if [[ -n "$APPROVAL_URL" ]]; then
+    echo "  ║   Approve at:                                         ║"
+    printf "  ║   %-51s ║\n" "$APPROVAL_URL"
+    echo "  ║                                                       ║"
+    fi
+    echo "  ║   Waiting for approval (up to 10 minutes)...          ║"
+    echo "  ║                                                       ║"
+    echo "  ╚═══════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+
+    # Step 3: Poll for approval
+    local POLL_START
+    POLL_START=$(date +%s)
+    local POLL_TIMEOUT=600  # 10 minutes
+    local APPROVED=false
+
+    while true; do
+        local NOW
+        NOW=$(date +%s)
+        local ELAPSED=$((NOW - POLL_START))
+
+        if [[ $ELAPSED -ge $POLL_TIMEOUT ]]; then
+            echo ""
+            log_error "Pairing timed out (10 minutes)"
+            return 1
+        fi
+
+        sleep 5
+
+        # Check status
+        local STATUS_RESPONSE
+        STATUS_RESPONSE=$(curl -s "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/status" 2>/dev/null || echo '{}')
+
+        local STATUS
+        STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // "pending"')
+
+        case "$STATUS" in
+            approved)
+                EXCHANGE_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.exchange_token // empty')
+                if [[ -z "$EXCHANGE_TOKEN" ]]; then
+                    EXCHANGE_TOKEN=$(echo "$PAIR_BODY" | jq -r '.exchange_token // empty')
+                fi
+                APPROVED=true
+                break
+                ;;
+            denied)
+                echo ""
+                log_error "Pairing request was denied"
+                return 1
+                ;;
+            expired)
+                echo ""
+                log_error "Pairing code expired"
+                return 1
+                ;;
+        esac
+
+        # Show progress dot
+        printf "."
+    done
+
+    echo ""
+    log_success "Pairing approved!"
+
+    # Step 4: Exchange for session token
+    log_info "Exchanging pairing code for session token..."
+
+    local EXCHANGE_RESPONSE
+    EXCHANGE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/exchange" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"exchange_token\": \"${EXCHANGE_TOKEN}\",
+            \"ttl_days\": 30
+        }" 2>/dev/null || echo -e "\n000")
+
+    local EXCHANGE_HTTP_CODE
+    EXCHANGE_HTTP_CODE=$(echo "$EXCHANGE_RESPONSE" | tail -1)
+    local EXCHANGE_BODY
+    EXCHANGE_BODY=$(echo "$EXCHANGE_RESPONSE" | sed '$d')
+
+    if [[ "$EXCHANGE_HTTP_CODE" != "200" ]]; then
+        log_error "Token exchange failed (HTTP $EXCHANGE_HTTP_CODE)"
+        return 1
+    fi
+
+    ARTIFACT_TOKEN=$(echo "$EXCHANGE_BODY" | jq -r '.session_token // empty')
+    ARTIFACT_TOKEN_EXPIRES=$(echo "$EXCHANGE_BODY" | jq -r '.expires_at // empty')
+
+    if [[ -z "$ARTIFACT_TOKEN" ]]; then
+        log_error "No session token returned"
+        return 1
+    fi
+
+    log_success "Session token obtained (expires: ${ARTIFACT_TOKEN_EXPIRES:-unknown})"
+
+    # Validate the new token works
+    if validate_token "$ARTIFACT_TOKEN"; then
+        return 0
+    else
+        log_error "Token validation failed after exchange"
+        return 1
+    fi
+}
+
 # Get Artifact Portal token
 get_artifact_token() {
     log_step "Artifact Portal Authentication"
 
-    # Use embedded token by default
-    ARTIFACT_TOKEN="$DEFAULT_API_TOKEN"
+    ARTIFACT_TOKEN=""
+    ARTIFACT_TOKEN_EXPIRES=""
 
-    if [[ -n "$ARTIFACT_TOKEN" ]]; then
-        log_info "Using embedded API token..."
+    # Priority 1: ARTIFACT_PORTAL_TOKEN env var (automated/unattended fallback)
+    if [[ -n "${ARTIFACT_PORTAL_TOKEN:-}" ]]; then
+        log_info "Using ARTIFACT_PORTAL_TOKEN from environment..."
+        ARTIFACT_TOKEN="$ARTIFACT_PORTAL_TOKEN"
         if validate_token "$ARTIFACT_TOKEN"; then
             return 0
         else
-            log_warn "Embedded token failed, prompting for manual entry"
+            log_warn "Environment token failed validation"
             ARTIFACT_TOKEN=""
         fi
     fi
 
-    # Fall back to manual entry if no embedded token or it failed
+    # Priority 2: Device pairing (default interactive path)
+    echo ""
+    echo "This tool requires authentication with the Artifact Portal."
+    echo "You'll need to approve this device on the Artifact Portal website."
+    echo ""
+
+    local PAIRING_ATTEMPTS=0
+    local MAX_PAIRING_ATTEMPTS=3
+
+    while [[ $PAIRING_ATTEMPTS -lt $MAX_PAIRING_ATTEMPTS ]]; do
+        PAIRING_ATTEMPTS=$((PAIRING_ATTEMPTS + 1))
+
+        if device_pairing; then
+            return 0
+        fi
+
+        if [[ $PAIRING_ATTEMPTS -lt $MAX_PAIRING_ATTEMPTS ]]; then
+            echo ""
+            read -p "Pairing failed. Try again? [Y/n] " -n 1 -r REPLY <&3
+            echo
+            if [[ $REPLY =~ ^[Nn]$ ]]; then
+                break
+            fi
+        fi
+    done
+
+    # Priority 3: Manual token entry (last resort)
+    echo ""
+    log_warn "Device pairing failed. You can enter an API token manually."
     echo ""
     echo "Enter your Artifact Portal API token."
     echo "This token will be securely stored for future updates."
@@ -382,10 +564,18 @@ create_directories() {
     mkdir -p "$INSTALL_DIR/update-signal"
     mkdir -p "$VIDEO_DIR"
 
+    # Create token files (Docker bind mounts need files to exist before container start)
+    touch "$INSTALL_DIR/.artifact-token"
+    touch "$INSTALL_DIR/.artifact-token-expires"
+    chmod 600 "$INSTALL_DIR/.artifact-token"
+    chmod 600 "$INSTALL_DIR/.artifact-token-expires"
+
     # Set permissions for container user (typically uid 1000)
     chown -R 1000:1000 "$INSTALL_DIR/instance" 2>/dev/null || true
     chown -R 1000:1000 "$INSTALL_DIR/output" 2>/dev/null || true
     chown -R 1000:1000 "$INSTALL_DIR/update-signal" 2>/dev/null || true
+    chown 1000:1000 "$INSTALL_DIR/.artifact-token" 2>/dev/null || true
+    chown 1000:1000 "$INSTALL_DIR/.artifact-token-expires" 2>/dev/null || true
     chmod 755 "$INSTALL_DIR/instance"
     chmod 755 "$INSTALL_DIR/output"
 
@@ -580,7 +770,7 @@ OUTPUT_DIR=/app/output
 DATABASE_PATH=/app/instance/benchmark.db
 
 # Docker Compose template version (used for update compatibility)
-COMPOSE_VERSION=4
+COMPOSE_VERSION=5
 
 # Update script version (used for update script self-updates)
 UPDATE_SCRIPT_VERSION=2
@@ -662,6 +852,9 @@ services:
       - ${VIDEO_DIR}:/app/videos
       # Signal directory for updates and AxxonOne service control
       - ./update-signal:/var/run/gpu-nt-benchmark
+      # Artifact Portal token (shared between container and host for re-pairing)
+      - ./.artifact-token:/app/.artifact-token
+      - ./.artifact-token-expires:/app/.artifact-token-expires
       # AxxonOne DetectorPack (read-only access to NeuroSDK filters)
       - /opt/AxxonSoft/DetectorPack/NeuroSDK:/opt/AxxonSoft/DetectorPack/NeuroSDK:ro
       # Cache generator binary (read-only, for GPU cache generation)
@@ -692,6 +885,15 @@ EOF
 save_api_token() {
     echo "$ARTIFACT_TOKEN" > "$INSTALL_DIR/.artifact-token"
     chmod 600 "$INSTALL_DIR/.artifact-token"
+    chown 1000:1000 "$INSTALL_DIR/.artifact-token" 2>/dev/null || true
+
+    # Save token expiry if available (from device pairing)
+    if [[ -n "${ARTIFACT_TOKEN_EXPIRES:-}" ]]; then
+        echo "$ARTIFACT_TOKEN_EXPIRES" > "$INSTALL_DIR/.artifact-token-expires"
+    fi
+    chmod 600 "$INSTALL_DIR/.artifact-token-expires"
+    chown 1000:1000 "$INSTALL_DIR/.artifact-token-expires" 2>/dev/null || true
+
     log_success "API token saved for updates"
 }
 
@@ -834,6 +1036,26 @@ fi
 
 ARTIFACT_TOKEN=$(cat "$INSTALL_DIR/.artifact-token")
 
+if [[ -z "$ARTIFACT_TOKEN" ]]; then
+    log_error "API token is empty. Re-pair the device from the web UI."
+    write_result "token_expired" "API token is empty. Re-pair your device." ""
+    exit 1
+fi
+
+# Check token expiry before making API calls
+if [[ -f "$INSTALL_DIR/.artifact-token-expires" ]]; then
+    TOKEN_EXPIRES=$(cat "$INSTALL_DIR/.artifact-token-expires")
+    if [[ -n "$TOKEN_EXPIRES" ]]; then
+        EXPIRY_EPOCH=$(date -d "$TOKEN_EXPIRES" +%s 2>/dev/null || echo "0")
+        NOW_EPOCH=$(date +%s)
+        if [[ "$EXPIRY_EPOCH" -gt 0 ]] && [[ "$NOW_EPOCH" -ge "$EXPIRY_EPOCH" ]]; then
+            log_error "Artifact Portal token has expired. Re-pair from the web UI."
+            write_result "token_expired" "Token expired. Re-pair your device from Settings." ""
+            exit 1
+        fi
+    fi
+fi
+
 log_info "Checking for updates..."
 
 # Get current version
@@ -843,7 +1065,7 @@ if [[ -f "$INSTALL_DIR/.installed-version" ]]; then
 fi
 
 # Get latest version info
-PRESIGN_RESPONSE=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-latest" \
+PRESIGN_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-latest" \
     -H "Authorization: Bearer $ARTIFACT_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{
@@ -853,9 +1075,19 @@ PRESIGN_RESPONSE=$(curl -s -X POST "${ARTIFACT_PORTAL_URL}/api/v2/presign-latest
         \"latest_filename\": \"${ARTIFACT_FILENAME}\"
     }")
 
-DOWNLOAD_URL=$(echo "$PRESIGN_RESPONSE" | jq -r '.url // empty')
-EXPECTED_SHA256=$(echo "$PRESIGN_RESPONSE" | jq -r '.sha256 // empty')
-FILENAME=$(echo "$PRESIGN_RESPONSE" | jq -r '.filename // empty')
+PRESIGN_HTTP_CODE=$(echo "$PRESIGN_RESPONSE" | tail -1)
+PRESIGN_BODY=$(echo "$PRESIGN_RESPONSE" | sed '$d')
+
+# Handle expired/invalid token
+if [[ "$PRESIGN_HTTP_CODE" == "401" ]] || [[ "$PRESIGN_HTTP_CODE" == "403" ]]; then
+    log_error "Artifact Portal token expired or invalid (HTTP $PRESIGN_HTTP_CODE)"
+    write_result "token_expired" "Token expired or invalid. Re-pair your device from Settings." "$CURRENT_VERSION"
+    exit 1
+fi
+
+DOWNLOAD_URL=$(echo "$PRESIGN_BODY" | jq -r '.url // empty')
+EXPECTED_SHA256=$(echo "$PRESIGN_BODY" | jq -r '.sha256 // empty')
+FILENAME=$(echo "$PRESIGN_BODY" | jq -r '.filename // empty')
 
 if [[ -z "$DOWNLOAD_URL" ]]; then
     log_error "Failed to get download URL"

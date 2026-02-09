@@ -21,7 +21,7 @@ This helps you determine the maximum number of NeuralTracker-enabled cameras you
 - **NVIDIA GPU** with drivers installed (optional but recommended)
 - **NVIDIA Container Toolkit** (for GPU monitoring inside container)
 - **AxxonOne VMS** server accessible from the host
-- **Artifact Portal API Token** (provided by administrator)
+- **Web browser** to approve device pairing on the Artifact Portal
 
 ## Quick Install
 
@@ -44,13 +44,21 @@ less install.sh
 sudo bash install.sh
 ```
 
+### Automated Install (Skip Pairing)
+
+For unattended or scripted installs, set the `ARTIFACT_PORTAL_TOKEN` environment variable to skip the interactive device pairing:
+
+```bash
+ARTIFACT_PORTAL_TOKEN=apt_xxxxx curl -fsSL https://raw.githubusercontent.com/csardoss/AxxonOne-NT-Testing-Docker/main/install.sh | sudo bash
+```
+
 ## What the Installer Does
 
 The interactive installer will:
 
 1. **Check prerequisites** - Verifies Docker, Docker Compose, and jq are installed
 2. **Check NVIDIA support** - Tests if NVIDIA Container Toolkit is available
-3. **Authenticate** - Prompts for your Artifact Portal API token
+3. **Authenticate** - Device pairing with Artifact Portal (display code, approve in browser)
 4. **Download** - Pulls the Docker image from Artifact Portal with SHA256 verification
 5. **Configure** - Asks for AxxonOne server connection details
 6. **Generate configs** - Creates `.env` and `docker-compose.yml` files
@@ -65,7 +73,8 @@ After installation, files are located at:
 |------|-------------|
 | `/opt/gpu-nt-benchmark/` | Main installation directory |
 | `/opt/gpu-nt-benchmark/.env` | Configuration file (contains version tracking) |
-| `/opt/gpu-nt-benchmark/.artifact-token` | API token for updates (chmod 600) |
+| `/opt/gpu-nt-benchmark/.artifact-token` | Session token from device pairing (chmod 600) |
+| `/opt/gpu-nt-benchmark/.artifact-token-expires` | Token expiry timestamp (chmod 600) |
 | `/opt/gpu-nt-benchmark/.installed-version` | Currently installed version |
 | `/opt/gpu-nt-benchmark/docker-compose.yml` | Docker Compose configuration |
 | `/opt/gpu-nt-benchmark/update.sh` | Update script (self-updating) |
@@ -122,6 +131,33 @@ sudo /opt/gpu-nt-benchmark/update.sh
 # Uninstall
 sudo /opt/gpu-nt-benchmark/uninstall.sh
 ```
+
+## Device Pairing & Token Management
+
+The tool uses **device pairing** to authenticate with the Artifact Portal. Instead of embedding a static API token, the installer displays a short pairing code that you approve on the portal website. This issues a **30-day session token**.
+
+### How Pairing Works
+
+1. **During install**: A pairing code is displayed (e.g., `ABCD-1234`)
+2. **Approve**: Open the approval URL in your browser and approve the code
+3. **Token issued**: A 30-day session token is saved to `.artifact-token`
+4. **Re-pairing**: When the token expires, re-pair from **Settings** in the web UI
+
+### Token Expiry
+
+When the session token expires:
+- The **Settings** page shows "Token expired" with a "Re-pair Device" button
+- Update checks and video pack downloads will show a re-pair prompt
+- Click "Re-pair Device" to get a new pairing code and approve it
+
+### Token Files
+
+| File | Purpose |
+|------|---------|
+| `.artifact-token` | Current session token (bind-mounted into container) |
+| `.artifact-token-expires` | ISO 8601 expiry timestamp |
+
+Both files are bind-mounted between the host and container so re-pairing from the web UI persists across container restarts.
 
 ## Updating
 
@@ -216,11 +252,12 @@ HOST_ID=my-hostname
 
 # Artifact Portal (for updates)
 ARTIFACT_PORTAL_URL=https://artifacts.digitalsecurityguard.com
-ARTIFACT_PORTAL_TOKEN=apt_xxxxx
+# Token is managed via device pairing (.artifact-token file)
+# For automated installs, set ARTIFACT_PORTAL_TOKEN env var to skip pairing
 
 # Version Tracking (managed automatically)
 APP_SHA256=abc123...
-COMPOSE_VERSION=4
+COMPOSE_VERSION=5
 UPDATE_SCRIPT_VERSION=2
 
 # Optional: S3 Upload for reports
