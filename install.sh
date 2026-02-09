@@ -374,11 +374,11 @@ device_pairing() {
     echo "  ║                                                       ║"
     printf "  ║       %-16s                           ║\n" "$PAIRING_CODE"
     echo "  ║                                                       ║"
-    if [[ -n "$APPROVAL_URL" ]]; then
+    # Use API-provided URL or fall back to portal base URL
+    local DISPLAY_URL="${APPROVAL_URL:-${ARTIFACT_PORTAL_URL}/pair}"
     echo "  ║   Approve at:                                         ║"
-    printf "  ║   %-51s ║\n" "$APPROVAL_URL"
+    printf "  ║   %-51s ║\n" "$DISPLAY_URL"
     echo "  ║                                                       ║"
-    fi
     echo "  ║   Waiting for approval (up to 10 minutes)...          ║"
     echo "  ║                                                       ║"
     echo "  ╚═══════════════════════════════════════════════════════╝"
