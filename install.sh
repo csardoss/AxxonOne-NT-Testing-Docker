@@ -412,15 +412,22 @@ device_pairing() {
         STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // "pending"')
 
         case "$STATUS" in
-            approved)
+            approved|completed|active|paired)
                 EXCHANGE_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.exchange_token // empty')
                 if [[ -z "$EXCHANGE_TOKEN" ]]; then
                     EXCHANGE_TOKEN=$(echo "$PAIR_BODY" | jq -r '.exchange_token // empty')
                 fi
+                # Also check if the token was returned directly (some portal versions)
+                local DIRECT_TOKEN
+                DIRECT_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.session_token // empty')
+                if [[ -n "$DIRECT_TOKEN" ]]; then
+                    ARTIFACT_TOKEN="$DIRECT_TOKEN"
+                    ARTIFACT_TOKEN_EXPIRES=$(echo "$STATUS_RESPONSE" | jq -r '.expires_at // empty')
+                fi
                 APPROVED=true
                 break
                 ;;
-            denied)
+            denied|rejected)
                 echo ""
                 log_error "Pairing request was denied"
                 return 1
@@ -429,6 +436,13 @@ device_pairing() {
                 echo ""
                 log_error "Pairing code expired"
                 return 1
+                ;;
+            pending|waiting)
+                # Expected - still waiting for approval
+                ;;
+            *)
+                # Unknown status - log it for debugging
+                log_warn "Unexpected pairing status: $STATUS (raw: $STATUS_RESPONSE)"
                 ;;
         esac
 
@@ -439,29 +453,32 @@ device_pairing() {
     echo ""
     log_success "Pairing approved!"
 
-    # Step 4: Exchange for session token
-    log_info "Exchanging pairing code for session token..."
+    # Step 4: Exchange for session token (skip if token already obtained from status response)
+    if [[ -z "$ARTIFACT_TOKEN" ]]; then
+        log_info "Exchanging pairing code for session token..."
 
-    local EXCHANGE_RESPONSE
-    EXCHANGE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/exchange" \
-        -H "Content-Type: application/json" \
-        -d "{
-            \"exchange_token\": \"${EXCHANGE_TOKEN}\",
-            \"ttl_days\": 30
-        }" 2>/dev/null || echo -e "\n000")
+        local EXCHANGE_RESPONSE
+        EXCHANGE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/exchange" \
+            -H "Content-Type: application/json" \
+            -d "{
+                \"exchange_token\": \"${EXCHANGE_TOKEN}\",
+                \"ttl_days\": 30
+            }" 2>/dev/null || echo -e "\n000")
 
-    local EXCHANGE_HTTP_CODE
-    EXCHANGE_HTTP_CODE=$(echo "$EXCHANGE_RESPONSE" | tail -1)
-    local EXCHANGE_BODY
-    EXCHANGE_BODY=$(echo "$EXCHANGE_RESPONSE" | sed '$d')
+        local EXCHANGE_HTTP_CODE
+        EXCHANGE_HTTP_CODE=$(echo "$EXCHANGE_RESPONSE" | tail -1)
+        local EXCHANGE_BODY
+        EXCHANGE_BODY=$(echo "$EXCHANGE_RESPONSE" | sed '$d')
 
-    if [[ "$EXCHANGE_HTTP_CODE" != "200" ]]; then
-        log_error "Token exchange failed (HTTP $EXCHANGE_HTTP_CODE)"
-        return 1
+        if [[ "$EXCHANGE_HTTP_CODE" != "200" ]]; then
+            log_error "Token exchange failed (HTTP $EXCHANGE_HTTP_CODE)"
+            log_error "Response: $EXCHANGE_BODY"
+            return 1
+        fi
+
+        ARTIFACT_TOKEN=$(echo "$EXCHANGE_BODY" | jq -r '.session_token // empty')
+        ARTIFACT_TOKEN_EXPIRES=$(echo "$EXCHANGE_BODY" | jq -r '.expires_at // empty')
     fi
-
-    ARTIFACT_TOKEN=$(echo "$EXCHANGE_BODY" | jq -r '.session_token // empty')
-    ARTIFACT_TOKEN_EXPIRES=$(echo "$EXCHANGE_BODY" | jq -r '.expires_at // empty')
 
     if [[ -z "$ARTIFACT_TOKEN" ]]; then
         log_error "No session token returned"
