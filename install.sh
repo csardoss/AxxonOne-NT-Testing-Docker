@@ -355,10 +355,8 @@ device_pairing() {
 
     local PAIRING_CODE
     PAIRING_CODE=$(echo "$PAIR_BODY" | jq -r '.pairing_code // empty')
-    local APPROVAL_URL
-    APPROVAL_URL=$(echo "$PAIR_BODY" | jq -r '.approval_url // empty')
-    local EXCHANGE_TOKEN
-    EXCHANGE_TOKEN=$(echo "$PAIR_BODY" | jq -r '.exchange_token // empty')
+    local PAIRING_URL
+    PAIRING_URL=$(echo "$PAIR_BODY" | jq -r '.pairing_url // empty')
 
     if [[ -z "$PAIRING_CODE" ]]; then
         log_error "No pairing code returned"
@@ -374,8 +372,13 @@ device_pairing() {
     echo "  ║                                                       ║"
     printf "  ║       %-16s                           ║\n" "$PAIRING_CODE"
     echo "  ║                                                       ║"
-    # Use API-provided URL or fall back to portal base URL
-    local DISPLAY_URL="${APPROVAL_URL:-${ARTIFACT_PORTAL_URL}/pair}"
+    # Build full approval URL from relative pairing_url
+    local DISPLAY_URL
+    if [[ -n "$PAIRING_URL" ]]; then
+        DISPLAY_URL="${ARTIFACT_PORTAL_URL}${PAIRING_URL}"
+    else
+        DISPLAY_URL="${ARTIFACT_PORTAL_URL}/pair/${PAIRING_CODE}"
+    fi
     echo "  ║   Approve at:                                         ║"
     printf "  ║   %-51s ║\n" "$DISPLAY_URL"
     echo "  ║                                                       ║"
@@ -406,28 +409,19 @@ device_pairing() {
 
         # Check status
         local STATUS_RESPONSE
-        STATUS_RESPONSE=$(curl -s "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/status" 2>/dev/null || echo '{}')
+        STATUS_RESPONSE=$(curl -s "${ARTIFACT_PORTAL_URL}/api/v2/pairing/status/${PAIRING_CODE}" 2>/dev/null || echo '{}')
 
         local STATUS
         STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status // "pending"')
 
         case "$STATUS" in
-            approved|completed|active|paired)
+            approved)
+                local EXCHANGE_TOKEN
                 EXCHANGE_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.exchange_token // empty')
-                if [[ -z "$EXCHANGE_TOKEN" ]]; then
-                    EXCHANGE_TOKEN=$(echo "$PAIR_BODY" | jq -r '.exchange_token // empty')
-                fi
-                # Also check if the token was returned directly (some portal versions)
-                local DIRECT_TOKEN
-                DIRECT_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.session_token // empty')
-                if [[ -n "$DIRECT_TOKEN" ]]; then
-                    ARTIFACT_TOKEN="$DIRECT_TOKEN"
-                    ARTIFACT_TOKEN_EXPIRES=$(echo "$STATUS_RESPONSE" | jq -r '.expires_at // empty')
-                fi
                 APPROVED=true
                 break
                 ;;
-            denied|rejected)
+            denied)
                 echo ""
                 log_error "Pairing request was denied"
                 return 1
@@ -437,12 +431,8 @@ device_pairing() {
                 log_error "Pairing code expired"
                 return 1
                 ;;
-            pending|waiting)
+            pending)
                 # Expected - still waiting for approval
-                ;;
-            *)
-                # Unknown status - log it for debugging
-                log_warn "Unexpected pairing status: $STATUS (raw: $STATUS_RESPONSE)"
                 ;;
         esac
 
@@ -458,11 +448,11 @@ device_pairing() {
         log_info "Exchanging pairing code for session token..."
 
         local EXCHANGE_RESPONSE
-        EXCHANGE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/${PAIRING_CODE}/exchange" \
+        EXCHANGE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "${ARTIFACT_PORTAL_URL}/api/v2/pairing/exchange" \
             -H "Content-Type: application/json" \
             -d "{
-                \"exchange_token\": \"${EXCHANGE_TOKEN}\",
-                \"ttl_days\": 30
+                \"pairing_code\": \"${PAIRING_CODE}\",
+                \"exchange_token\": \"${EXCHANGE_TOKEN}\"
             }" 2>/dev/null || echo -e "\n000")
 
         local EXCHANGE_HTTP_CODE
@@ -476,7 +466,7 @@ device_pairing() {
             return 1
         fi
 
-        ARTIFACT_TOKEN=$(echo "$EXCHANGE_BODY" | jq -r '.session_token // empty')
+        ARTIFACT_TOKEN=$(echo "$EXCHANGE_BODY" | jq -r '.access_token // empty')
         ARTIFACT_TOKEN_EXPIRES=$(echo "$EXCHANGE_BODY" | jq -r '.expires_at // empty')
     fi
 
